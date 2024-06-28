@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	koanfjson "github.com/knadh/koanf/parsers/json"
 	flag "github.com/spf13/pflag"
 
 	"github.com/ethereum/go-ethereum/log"
@@ -31,11 +30,10 @@ type CelestiaDAServerConfig struct {
 	RPCServerTimeouts  genericconf.HTTPServerTimeoutConfig `koanf:"rpc-server-timeouts"`
 	RPCServerBodyLimit int                                 `koanf:"rpc-server-body-limit"`
 
-	CelestiaDa das.DAConfig `koanf:"celestia-da-config"`
+	CelestiaDa das.DAConfig `koanf:"celestia"`
 
-	Conf     genericconf.ConfConfig `koanf:"conf"`
-	LogLevel string                 `koanf:"log-level"`
-	LogType  string                 `koanf:"log-type"`
+	LogLevel string `koanf:"log-level"`
+	LogType  string `koanf:"log-type"`
 
 	Metrics       bool                            `koanf:"metrics"`
 	MetricsServer genericconf.MetricsServerConfig `koanf:"metrics-server"`
@@ -85,8 +83,16 @@ func parseDAServer(args []string) (*CelestiaDAServerConfig, error) {
 	f.String("log-level", DefaultCelestiaDAServerConfig.LogLevel, "log level, valid values are CRIT, ERROR, WARN, INFO, DEBUG, TRACE")
 	f.String("log-type", DefaultCelestiaDAServerConfig.LogType, "log type (plaintext or json)")
 
-	das.CelestiaDAConfigAddOptions("celestia-cfg", f)
-	genericconf.ConfConfigAddOptions("conf", f)
+	das.CelestiaDAConfigAddOptions("celestia", f)
+	// f.Float64("gas-price", 0.01, "Gas for retrying Celestia transactions")
+	// f.Float64("gas-multiplier", 1.01, "Gas multiplier for Celestia transactions")
+	// f.String("rpc", "", "Rpc endpoint for celestia-node")
+	// f.String("namespace-id", "", "Celestia Namespace to post data to")
+	// f.String("auth-token", "", "Auth token for Celestia Node")
+	// f.Bool("noop-writer", false, "Noop writer (disable posting to celestia)")
+	// f.String("validator-config"+".tendermint-rpc", "", "Tendermint RPC endpoint, only used for validation")
+	// f.String("validator-config"+".eth-rpc", "", "L1 Websocket connection, only used for validation")
+	// f.String("validator-config"+".blobstream", "", "Blobstream address, only used for validation")
 
 	k, err := confighelpers.BeginCommonParse(f, args)
 	if err != nil {
@@ -96,20 +102,6 @@ func parseDAServer(args []string) (*CelestiaDAServerConfig, error) {
 	var serverConfig CelestiaDAServerConfig
 	if err := confighelpers.EndCommonParse(k, &serverConfig); err != nil {
 		return nil, err
-	}
-	if serverConfig.Conf.Dump {
-		err = confighelpers.DumpConfig(k, nil)
-		if err != nil {
-			return nil, fmt.Errorf("error removing extra parameters before dump: %w", err)
-		}
-
-		c, err := k.Marshal(koanfjson.Parser())
-		if err != nil {
-			return nil, fmt.Errorf("unable to marshal config file to JSON: %w", err)
-		}
-
-		fmt.Println(string(c))
-		os.Exit(0)
 	}
 
 	return &serverConfig, nil
@@ -154,6 +146,7 @@ func startup() error {
 
 	serverConfig, err := parseDAServer(os.Args[1:])
 	if err != nil {
+		fmt.Println("Server config: ", serverConfig)
 		confighelpers.PrintErrorAndExit(err, printSampleUsage)
 	}
 	if !(serverConfig.EnableRPC) {
@@ -183,7 +176,8 @@ func startup() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
+	// todo: add comething to zero out Validator config
+	serverConfig.CelestiaDa.ValidatorConfig = nil
 	celestiaDA, err := das.NewCelestiaDA(&serverConfig.CelestiaDa, nil)
 	var celestiaReader das.CelestiaReader
 	var celestiaWriter das.CelestiaWriter
@@ -199,8 +193,6 @@ func startup() error {
 			return err
 		}
 	}
-
-	// Create lifecycleManager for Celestia DA that closes all services
 
 	<-sigint
 	celestiaDA.Stop()

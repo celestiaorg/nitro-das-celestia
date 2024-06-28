@@ -4,7 +4,7 @@ go 1.21.5
 
 require (
 	github.com/celestiaorg/celestia-openrpc v0.4.1-0.20240603174346-256ddd020a0a
-	github.com/ethereum/go-ethereum v1.14.5
+	github.com/ethereum/go-ethereum v1.13.10
 	github.com/knadh/koanf v1.4.0
 	github.com/offchainlabs/nitro v0.0.0-20240617192228-0fe780b8f0bb
 	github.com/spf13/pflag v1.0.5
@@ -153,6 +153,7 @@ require (
 )
 
 replace (
+	github.com/crate-crypto/go-kzg-4844 v1.0.0 => github.com/crate-crypto/go-kzg-4844 v0.7.0
 	github.com/ethereum/go-ethereum => github.com/offchainlabs/go-ethereum v1.13.4-0.20240528235010-de513a2b2c8e
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 	github.com/tendermint/tendermint => github.com/celestiaorg/celestia-core v1.29.0-tm-v0.34.29

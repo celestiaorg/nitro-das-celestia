@@ -84,15 +84,6 @@ func parseDAServer(args []string) (*CelestiaDAServerConfig, error) {
 	f.String("log-type", DefaultCelestiaDAServerConfig.LogType, "log type (plaintext or json)")
 
 	das.CelestiaDAConfigAddOptions("celestia", f)
-	// f.Float64("gas-price", 0.01, "Gas for retrying Celestia transactions")
-	// f.Float64("gas-multiplier", 1.01, "Gas multiplier for Celestia transactions")
-	// f.String("rpc", "", "Rpc endpoint for celestia-node")
-	// f.String("namespace-id", "", "Celestia Namespace to post data to")
-	// f.String("auth-token", "", "Auth token for Celestia Node")
-	// f.Bool("noop-writer", false, "Noop writer (disable posting to celestia)")
-	// f.String("validator-config"+".tendermint-rpc", "", "Tendermint RPC endpoint, only used for validation")
-	// f.String("validator-config"+".eth-rpc", "", "L1 Websocket connection, only used for validation")
-	// f.String("validator-config"+".blobstream", "", "Blobstream address, only used for validation")
 
 	k, err := confighelpers.BeginCommonParse(f, args)
 	if err != nil {

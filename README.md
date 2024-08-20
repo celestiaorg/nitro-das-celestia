@@ -1,5 +1,7 @@
 # Arbitrum Nitro Data Availability Server for Celestia DA
 
+*NOTE:* Currently for use against [celestia-node](https://github.com/celestiaorg/celestia-node) version 0.15.0
+
 ## Build locally
 
 `cd cmd && go build -o celestia-server`

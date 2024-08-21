@@ -6,6 +6,11 @@
 
 `cd cmd && go build -o celestia-server`
 
+## Docker
+
+`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.2.0`
+
+
 ## Example usage
 
 ```

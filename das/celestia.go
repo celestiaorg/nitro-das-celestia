@@ -38,6 +38,7 @@ type DAConfig struct {
 	NamespaceId        string           `koanf:"namespace-id" `
 	AuthToken          string           `koanf:"auth-token" reload:"hot"`
 	ReadAuthToken      string           `koanf:"read-auth-token" reload:"hot"`
+	KeyringKeyname     string     	    `koanf:"keyring-keyname" reload:"hot"`
 	NoopWriter         bool             `koanf:"noop-writer" reload:"hot"`
 	ValidatorConfig    *ValidatorConfig `koanf:"validator-config"`
 	ReorgOnReadFailure bool             `koanf:"dangerous-reorg-on-read-failure"`
@@ -108,6 +109,7 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.String(prefix+".namespace-id", "", "Celestia Namespace to post data to")
 	f.String(prefix+".auth-token", "", "Auth token for Celestia Node")
 	f.String(prefix+".read-auth-token", "", "Auth token for Celestia Node")
+	f.String(prefix+".keyring-keyname", "", "Keyring keyname for Celestia Node for blobs submission")
 	f.Bool(prefix+".noop-writer", false, "Noop writer (disable posting to celestia)")
 	f.String(prefix+".validator-config"+".tendermint-rpc", "", "Tendermint RPC endpoint, only used for validation")
 	f.String(prefix+".validator-config"+".eth-rpc", "", "L1 Websocket connection, only used for validation")
@@ -146,6 +148,17 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 	if err != nil {
 		return nil, err
 	}
+
+    if cfg.KeyringKeyname == "" {
+        return nil, errors.New("keyring keyname cannot be blank")
+    }
+	if !isValidKeyringKeyname(cfg.KeyringKeyname) {
+        return nil, fmt.Errorf("invalid keyring keyname format: %s", cfg.KeyringKeyname)
+    }
+	err = daClient.SetKeyringKeyname(cfg.KeyringKeyname)
+    if err != nil {
+        return nil, fmt.Errorf("failed to set keyring keyname: %w", err)
+    }
 
 	if cfg.ValidatorConfig != nil {
 		trpc, err := http.New(cfg.ValidatorConfig.TendermintRPC, "/websocket")
@@ -703,4 +716,9 @@ func (c *CelestiaDA) returnErrorHelper(err error) (*ReadResult, error) {
 	}
 
 	return nil, err
+}
+
+// Validate that the KeyringKeyname is a alphanumeric string of length > 0
+func isValidKeyringKeyname(name string) bool {
+    return len(name) > 0 && regexp.MustCompile(`^[a-zA-Z0-9_-]+$`).MatchString(name)
 }

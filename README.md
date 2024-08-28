@@ -14,7 +14,13 @@
 ## Example usage
 
 ```
-./celestia-server --enable-rpc --rpc-addr $RPC_ADDR --rpc-port $RPC_PORT --celestia.auth-token $AUTH_TOKEN --celestia.gas-price $GAS_PRICE --celestia.gas-multiplier $GAS_MULTIPLIER --celestia.namespace-id $NAMESPACEID --celestia.rpc $CELESTIA_NODE_ENDPOINT
+./celestia-server --enable-rpc --rpc-addr $RPC_ADDR \
+      --rpc-port $RPC_PORT --celestia.auth-token $AUTH_TOKEN \
+      --celestia.gas-price $GAS_PRICE \
+      --celestia.gas-multiplier $GAS_MULTIPLIER \
+      --celestia.namespace-id $NAMESPACEID \
+      --celestia.rpc $CELESTIA_NODE_ENDPOINT \
+      --celestia.keyring-keyname $KEYNAME
 ```
 
 ## Flags
@@ -27,6 +33,7 @@ Usage of daserver:
       --celestia.enable                                    Enable Celestia DA
       --celestia.gas-multiplier float                      Gas multiplier for Celestia transactions (default 1.01)
       --celestia.gas-price float                           Gas for retrying Celestia transactions (default 0.01)
+      --celestia.keyring-keyname string                    Celestia DA node keyring keyname for blobs submissions
       --celestia.namespace-id string                       Celestia Namespace to post data to
       --celestia.noop-writer                               Noop writer (disable posting to celestia)
       --celestia.read-auth-token string                    Auth token for Celestia Node

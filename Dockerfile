@@ -64,4 +64,4 @@ USER ${USER_NAME}
 
 # Expose ports:
 EXPOSE 1317 9090 26657 1095 8080 26658
-ENTRYPOINT ["sh", "-c", "/bin/celestia-server --enable-rpc --rpc-addr $RPC_ADDR --rpc-port $RPC_PORT --celestia.auth-token $AUTH_TOKEN --celestia.gas-price $GAS_PRICE --celestia.gas-multiplier $GAS_MULTIPLIER --celestia.namespace-id $NAMESPACEID --celestia.rpc $CELESTIA_NODE_ENDPOINT"]
+ENTRYPOINT ["sh", "-c", "/bin/celestia-server --enable-rpc --rpc-addr $RPC_ADDR --rpc-port $RPC_PORT --celestia.auth-token $AUTH_TOKEN --celestia.gas-price $GAS_PRICE --celestia.gas-multiplier $GAS_MULTIPLIER --celestia.namespace-id $NAMESPACEID --celestia.rpc $CELESTIA_NODE_ENDPOINT --celestia.keyring-keyname $KEYNAME"]

@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"strings"
 	"time"
+	"regexp"
 
 	"github.com/spf13/pflag"
 
@@ -38,7 +39,7 @@ type DAConfig struct {
 	NamespaceId        string           `koanf:"namespace-id" `
 	AuthToken          string           `koanf:"auth-token" reload:"hot"`
 	ReadAuthToken      string           `koanf:"read-auth-token" reload:"hot"`
-	KeyringKeyname     string     	    `koanf:"keyring-keyname" reload:"hot"`
+	KeyName     	   string     		`koanf:"keyname" reload:"hot"`
 	NoopWriter         bool             `koanf:"noop-writer" reload:"hot"`
 	ValidatorConfig    *ValidatorConfig `koanf:"validator-config"`
 	ReorgOnReadFailure bool             `koanf:"dangerous-reorg-on-read-failure"`
@@ -92,6 +93,7 @@ type CelestiaDA struct {
 	ReadClient *openrpc.Client
 	Namespace  *share.Namespace
 	Prover     *CelestiaProver
+	KeyName    string
 }
 
 type CelestiaProver struct {
@@ -109,7 +111,7 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.String(prefix+".namespace-id", "", "Celestia Namespace to post data to")
 	f.String(prefix+".auth-token", "", "Auth token for Celestia Node")
 	f.String(prefix+".read-auth-token", "", "Auth token for Celestia Node")
-	f.String(prefix+".keyring-keyname", "", "Keyring keyname for Celestia Node for blobs submission")
+	f.String(prefix+".keyname", "", "Keyring keyname for Celestia Node for blobs submission")
 	f.Bool(prefix+".noop-writer", false, "Noop writer (disable posting to celestia)")
 	f.String(prefix+".validator-config"+".tendermint-rpc", "", "Tendermint RPC endpoint, only used for validation")
 	f.String(prefix+".validator-config"+".eth-rpc", "", "L1 Websocket connection, only used for validation")
@@ -149,15 +151,11 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 		return nil, err
 	}
 
-    if cfg.KeyringKeyname == "" {
+    if cfg.KeyName == "" {
         return nil, errors.New("keyring keyname cannot be blank")
     }
-	if !isValidKeyringKeyname(cfg.KeyringKeyname) {
-        return nil, fmt.Errorf("invalid keyring keyname format: %s", cfg.KeyringKeyname)
-    }
-	err = daClient.SetKeyringKeyname(cfg.KeyringKeyname)
-    if err != nil {
-        return nil, fmt.Errorf("failed to set keyring keyname: %w", err)
+    if !isValidKeyName(cfg.KeyName) {
+        return nil, fmt.Errorf("invalid keyring keyname format: %s", cfg.KeyName)
     }
 
 	if cfg.ValidatorConfig != nil {
@@ -191,6 +189,7 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 			Client:     daClient,
 			ReadClient: readClient,
 			Namespace:  &namespace,
+			KeyName:    cfg.KeyName,
 			Prover: &CelestiaProver{
 				Trpc:        trpc,
 				EthClient:   ethRpc,
@@ -718,7 +717,7 @@ func (c *CelestiaDA) returnErrorHelper(err error) (*ReadResult, error) {
 	return nil, err
 }
 
-// Validate that the KeyringKeyname is a alphanumeric string of length > 0
-func isValidKeyringKeyname(name string) bool {
+// Validate that the KeyName is a alphanumeric string of length > 0
+func isValidKeyName(name string) bool {
     return len(name) > 0 && regexp.MustCompile(`^[a-zA-Z0-9_-]+$`).MatchString(name)
 }

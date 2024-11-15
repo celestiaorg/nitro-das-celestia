@@ -8,27 +8,25 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 	"time"
-	"regexp"
 
-	"github.com/spf13/pflag"
-
-	openrpc "github.com/celestiaorg/celestia-openrpc"
-	"github.com/celestiaorg/celestia-openrpc/types/blob"
-	"github.com/celestiaorg/celestia-openrpc/types/share"
+	node "github.com/celestiaorg/celestia-node/api/rpc/client"
+	"github.com/celestiaorg/celestia-node/blob"
+	"github.com/celestiaorg/celestia-node/state"
+	libshare "github.com/celestiaorg/go-square/v2/share"
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/spf13/pflag"
 
 	blobstreamx "github.com/succinctlabs/blobstreamx/bindings"
 	"github.com/tendermint/tendermint/rpc/client/http"
 )
-
-// TODO add tx options
 
 type DAConfig struct {
 	Enable             bool             `koanf:"enable"`
@@ -39,7 +37,7 @@ type DAConfig struct {
 	NamespaceId        string           `koanf:"namespace-id" `
 	AuthToken          string           `koanf:"auth-token" reload:"hot"`
 	ReadAuthToken      string           `koanf:"read-auth-token" reload:"hot"`
-	KeyName     	   string     		`koanf:"keyname" reload:"hot"`
+	KeyName            string           `koanf:"keyname" reload:"hot"`
 	NoopWriter         bool             `koanf:"noop-writer" reload:"hot"`
 	ValidatorConfig    *ValidatorConfig `koanf:"validator-config"`
 	ReorgOnReadFailure bool             `koanf:"dangerous-reorg-on-read-failure"`
@@ -89,11 +87,12 @@ func IsCelestiaMessageHeaderByte(header byte) bool {
 
 type CelestiaDA struct {
 	Cfg        *DAConfig
-	Client     *openrpc.Client
-	ReadClient *openrpc.Client
-	Namespace  *share.Namespace
-	Prover     *CelestiaProver
-	KeyName    string
+	Client     *node.Client
+	ReadClient *node.Client
+
+	Namespace *libshare.Namespace
+	Prover    *CelestiaProver
+	KeyName   string
 }
 
 type CelestiaProver struct {
@@ -123,14 +122,14 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 	if cfg == nil {
 		return nil, errors.New("celestia cfg cannot be blank")
 	}
-	daClient, err := openrpc.NewClient(context.Background(), cfg.Rpc, cfg.AuthToken)
+	daClient, err := node.NewClient(context.Background(), cfg.Rpc, cfg.AuthToken)
 	if err != nil {
 		return nil, err
 	}
 
-	var readClient *openrpc.Client
+	var readClient *node.Client
 	if cfg.ReadRpc != "" && cfg.ReadAuthToken != "" {
-		readClient, err = openrpc.NewClient(context.Background(), cfg.ReadRpc, cfg.ReadAuthToken)
+		readClient, err = node.NewClient(context.Background(), cfg.ReadRpc, cfg.ReadAuthToken)
 		if err != nil {
 			return nil, err
 		}
@@ -146,17 +145,17 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 		return nil, err
 	}
 
-	namespace, err := share.NewBlobNamespaceV0(nsBytes)
+	namespace, err := libshare.NewV0Namespace(nsBytes)
 	if err != nil {
 		return nil, err
 	}
 
-    if cfg.KeyName == "" {
-        return nil, errors.New("keyring keyname cannot be blank")
-    }
-    if !isValidKeyName(cfg.KeyName) {
-        return nil, fmt.Errorf("invalid keyring keyname format: %s", cfg.KeyName)
-    }
+	if cfg.KeyName == "" {
+		return nil, errors.New("keyring keyname cannot be blank")
+	}
+	if !isValidKeyName(cfg.KeyName) {
+		return nil, fmt.Errorf("invalid keyring keyname format: %s", cfg.KeyName)
+	}
 
 	if cfg.ValidatorConfig != nil {
 		trpc, err := http.New(cfg.ValidatorConfig.TendermintRPC, "/websocket")
@@ -243,7 +242,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	for !submitted {
 		// add submit options
 		submitOptions := &blob.SubmitOptions{}
-		blob.WithGasPrice(gasPrice)(submitOptions)
+		state.WithGasPrice(gasPrice)(submitOptions)
 		height, err = c.Client.Blob.Submit(ctx, []*blob.Blob{dataBlob}, submitOptions)
 		if err != nil {
 			switch {
@@ -421,7 +420,7 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadR
 		return c.returnErrorHelper(fmt.Errorf("failed to get blob, height=%v, commitment=%v, err=%v", blobPointer.BlockHeight, hex.EncodeToString(blobPointer.TxCommitment[:]), err))
 	}
 
-	eds, err := c.ReadClient.Share.GetEDS(ctx, header)
+	eds, err := c.ReadClient.Share.GetEDS(ctx, blobPointer.BlockHeight)
 	if err != nil {
 		return c.returnErrorHelper(fmt.Errorf("failed to get EDS, height=%v, err=%v", blobPointer.BlockHeight, err))
 	}
@@ -479,7 +478,7 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadR
 	}
 
 	return &ReadResult{
-		Message:     blob.Data,
+		Message:     blob.Data(),
 		RowRoots:    header.DAH.RowRoots,
 		ColumnRoots: header.DAH.ColumnRoots,
 		Rows:        rows,
@@ -719,5 +718,5 @@ func (c *CelestiaDA) returnErrorHelper(err error) (*ReadResult, error) {
 
 // Validate that the KeyName is a alphanumeric string of length > 0
 func isValidKeyName(name string) bool {
-    return len(name) > 0 && regexp.MustCompile(`^[a-zA-Z0-9_-]+$`).MatchString(name)
+	return len(name) > 0 && regexp.MustCompile(`^[a-zA-Z0-9_-]+$`).MatchString(name)
 }

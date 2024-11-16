@@ -4,7 +4,7 @@
 #
 # Separating the builder and runtime image allows the runtime image to be
 # considerably smaller because it doesn't need to have Golang installed.
-ARG BUILDER_IMAGE=docker.io/golang:1.22.1-alpine3.18
+ARG BUILDER_IMAGE=docker.io/golang:1.23.2-alpine
 ARG RUNTIME_IMAGE=docker.io/alpine:3.19.1
 ARG TARGETOS
 ARG TARGETARCH
@@ -14,7 +14,7 @@ ARG TARGETARCH
 # See https://github.com/hadolint/hadolint/issues/339
 # hadolint ignore=DL3006
 FROM --platform=$BUILDPLATFORM ${BUILDER_IMAGE} AS builder
-ENV CGO_ENABLED=0
+ENV CGO_ENABLED=1
 ENV GO111MODULE=on
 # hadolint ignore=DL3018
 RUN apk update && apk add --no-cache \
@@ -23,11 +23,16 @@ RUN apk update && apk add --no-cache \
     # linux-headers are needed for Ledger support
     linux-headers \
     make \
-    musl-dev
+    musl-dev \
+    build-base \
+    libc-dev
 COPY . /nitro-das-celestia
 WORKDIR /nitro-das-celestia/cmd
-RUN uname -a &&\
-    CGO_ENABLED=${CGO_ENABLED} GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+
+RUN go clean -modcache && \
+    go mod tidy && \
+    uname -a && \
+    CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -o celestia-server
 
 FROM ${RUNTIME_IMAGE} AS runtime

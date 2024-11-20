@@ -1,8 +1,6 @@
 # Arbitrum Nitro Data Availability Server for Celestia DA
 
-This server is used to communicate with Celestia DA nodes through the use of openrpc.
-
-*NOTE:* Currently for use against [celestia-node](https://github.com/celestiaorg/celestia-node) version 0.15.0
+A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA ✨
 
 ## Build locally
 

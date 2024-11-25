@@ -3,7 +3,7 @@ module github.com/celestiaorg/nitro-das-celestia
 go 1.23.2
 
 require (
-	github.com/celestiaorg/celestia-node v0.20.0-mocha
+	github.com/celestiaorg/celestia-node v0.20.2
 	github.com/celestiaorg/go-square/v2 v2.1.0-rc0
 	github.com/ethereum/go-ethereum v1.14.11
 	github.com/offchainlabs/nitro v0.0.0-20240924151236-d81324daee73

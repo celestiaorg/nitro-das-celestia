@@ -257,9 +257,20 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 				celestiaGasRetries.Inc(1)
 				continue
 			default:
-				celestiaFailureCounter.Inc(1)
-				log.Warn("Blob Submission error", "err", err)
-				return nil, err
+				log.Warn("Failing over to DA API", "err", err)
+				// Attempt to submit the blob with the DA API as a failover
+				ids, err := c.Client.DA.Submit(ctx, [][]byte{dataBlob.Data()}, gasPrice, c.Namespace.Bytes())
+				if err != nil {
+					celestiaFailureCounter.Inc(1)
+					log.Warn("Blob Submission error", "err", err)
+					return nil, err
+				}
+				if len(ids) != 1 {
+					return nil, fmt.Errorf("celestia da api: expected 1 id, got %d", len(ids))
+				}
+
+				// get the height from the DA API ID type
+				height = binary.BigEndian.Uint64(ids[0][:8])
 			}
 		}
 

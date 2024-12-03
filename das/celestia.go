@@ -413,11 +413,34 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadR
 		return c.returnErrorHelper(fmt.Errorf("data Root mismatch, header.DataHash=%v, blobPointer.DataRoot=%v", header.DataHash, hex.EncodeToString(blobPointer.DataRoot[:])))
 	}
 
-	blob, err := c.ReadClient.Blob.Get(ctx, blobPointer.BlockHeight, *c.Namespace, blobPointer.TxCommitment[:])
-	if err != nil {
-		// return an empty batch of data because we could not find the blob from the sequencer message
-		// we eventually manually reorg, setting ReorgOnReadFailure=true
-		return c.returnErrorHelper(fmt.Errorf("failed to get blob, height=%v, commitment=%v, err=%v", blobPointer.BlockHeight, hex.EncodeToString(blobPointer.TxCommitment[:]), err))
+	var blobData []byte
+	var sharesLength int
+BlobLoop:
+	for {
+		select {
+		case <-ctx.Done():
+			return c.returnErrorHelper(fmt.Errorf("context cancelled or deadline exceeded"))
+		default:
+			blob, err := c.ReadClient.Blob.Get(ctx, blobPointer.BlockHeight, *c.Namespace, blobPointer.TxCommitment[:])
+			if err != nil {
+				log.Warn("failed to read blob, retrying...", "err", err)
+				continue
+			}
+			blob.Index()
+			blob.Length()
+			blobData = blob.Data()
+			length, err := blob.Length()
+			if err != nil || length == 0 {
+				celestiaFailureCounter.Inc(1)
+				log.Warn("could not get shares length for blob", "err", err)
+				if err == nil {
+					err = fmt.Errorf("blob found, but has shares length zero")
+				}
+				return nil, err
+			}
+			sharesLength = length
+			break BlobLoop
+		}
 	}
 
 	eds, err := c.ReadClient.Share.GetEDS(ctx, blobPointer.BlockHeight)
@@ -425,7 +448,7 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadR
 		return c.returnErrorHelper(fmt.Errorf("failed to get EDS, height=%v, err=%v", blobPointer.BlockHeight, err))
 	}
 
-	squareSize := uint64(eds.Width())
+	squareSize := uint64(len(header.DAH.RowRoots))
 	odsSize := squareSize / 2
 
 	startRow := blobPointer.Start / odsSize
@@ -456,17 +479,6 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadR
 		return c.returnErrorHelper(fmt.Errorf("start and end row are the same and startColumn >= endColumn, startColumn=%v, endColumn+1=%v", startColumn, endColumn+1))
 	}
 
-	sharesLength, err := blob.Length()
-
-	if err != nil || sharesLength == 0 {
-		celestiaFailureCounter.Inc(1)
-		log.Warn("could not get shares length for blob", "err", err)
-		if err == nil {
-			err = fmt.Errorf("blob found, but has shares length zero")
-		}
-		return nil, err
-	}
-
 	if uint64(sharesLength) != blobPointer.SharesLength || sharesLength == 0 {
 		celestiaFailureCounter.Inc(1)
 		return c.returnErrorHelper(fmt.Errorf("share length mismatch, sharesLength=%v, blobPointer.SharesLength=%v", sharesLength, blobPointer.SharesLength))
@@ -478,7 +490,7 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadR
 	}
 
 	return &ReadResult{
-		Message:     blob.Data(),
+		Message:     blobData,
 		RowRoots:    header.DAH.RowRoots,
 		ColumnRoots: header.DAH.ColumnRoots,
 		Rows:        rows,

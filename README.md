@@ -8,7 +8,7 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
 
 ## Docker
 
-`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.2.0`
+`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.3.1`
 
 
 ## Example usage

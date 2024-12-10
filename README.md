@@ -40,8 +40,7 @@ Usage of daserver:
       --celestia.read-rpc string                           separate celestia RPC endpoint for reads
       --celestia.rpc string                                Rpc endpoint for celestia-node
       --celestia.validator-config.blobstream string        Blobstream address, only used for validation
-      --celestia.validator-config.eth-rpc string           L1 Websocket connection, only used for validation
-      --celestia.validator-config.tendermint-rpc string    Tendermint RPC endpoint, only used for validation
+      --celestia.validator-config.eth-rpc string           Parent chain connection, only used for validation
       --enable-rpc                                         enable the HTTP-RPC server listening on rpc-addr and rpc-port
       --log-level string                                   log level, valid values are CRIT, ERROR, WARN, INFO, DEBUG, TRACE (default "INFO")
       --log-type string                                    log type (plaintext or json) (default "plaintext")
@@ -60,3 +59,16 @@ Usage of daserver:
       --rpc-server-timeouts.read-timeout duration          the maximum duration for reading the entire request (http.Server.ReadTimeout) (default 30s)
       --rpc-server-timeouts.write-timeout duration         the maximum duration before timing out writes of the response (http.Server.WriteTimeout) (default 30s)
 ```
+
+## Running a Validator
+>[!CAUTION]
+> The celestia server binary won't throw an error if you forget to set the validator config, if you are running validators for your chain, please read carefully
+
+In order to ensure the validator for an Orbit chain is capable of fulffiling its role in case of a challenge, its important that the celestia-server command is given the following flags:
+- `--celestia.validator-config.blobstream string        Blobstream address, only used for validation`
+- `--celestia.validator-config.eth-rpc string           Parent chain connection, only used for validation`
+
+For the `blobstream` flag, you want to pass an address for the blobstream instance in the parent chain (i.e if you are running a validator for an Ethereum L2, the parent chain is Ethereum Mainnet), addresses for currently deployed instances of [SP1 Blobstream](https://docs.celestia.org/how-to-guides/blobstream#what-is-sp1-blobstream) can be found [here](https://docs.celestia.org/how-to-guides/blobstream#deployed-contracts). If you are deploying on a parent chain that is not in this list, please follow [this guide ](https://docs.celestia.org/how-to-guides/sp1-blobstream-deploy) to get a new deployment running and contact, and reach out to the [Succinct Team](https://linktr.ee/succinctlabs) for more information.
+
+For the `eth-rpc` flag, you just need to provide an rpc for the parent chain, and since you are running a node you likely already have an endpoint available in your nitro node config that can be re-used here. (NOTE: connection type is http)
+

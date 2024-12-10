@@ -3,8 +3,8 @@ package das
 import (
 	"math/big"
 
+	"github.com/celestiaorg/celestia-node/nodebuilder/blobstream"
 	"github.com/tendermint/tendermint/crypto/merkle"
-	coretypes "github.com/tendermint/tendermint/rpc/core/types"
 )
 
 type Namespace struct {
@@ -86,10 +86,10 @@ func toAttestationProof(
 	nonce uint64,
 	height uint64,
 	blockDataRoot [32]byte,
-	dataRootInclusionProof *coretypes.ResultDataRootInclusionProof,
+	dataRootInclusionProof *blobstream.DataRootTupleInclusionProof,
 ) AttestationProof {
-	sideNodes := make([][32]byte, len(dataRootInclusionProof.Proof.Aunts))
-	for i, sideNode := range dataRootInclusionProof.Proof.Aunts {
+	sideNodes := make([][32]byte, len((*dataRootInclusionProof).Aunts))
+	for i, sideNode := range (*dataRootInclusionProof).Aunts {
 		var bzSideNode [32]byte
 		copy(bzSideNode[:], sideNode)
 		sideNodes[i] = bzSideNode
@@ -103,8 +103,8 @@ func toAttestationProof(
 		},
 		Proof: BinaryMerkleProof{
 			SideNodes: sideNodes,
-			Key:       big.NewInt(dataRootInclusionProof.Proof.Index),
-			NumLeaves: big.NewInt(dataRootInclusionProof.Proof.Total),
+			Key:       big.NewInt((*dataRootInclusionProof).Index),
+			NumLeaves: big.NewInt((*dataRootInclusionProof).Total),
 		},
 	}
 }

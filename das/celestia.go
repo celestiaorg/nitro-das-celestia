@@ -14,6 +14,7 @@ import (
 
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
+	eds "github.com/celestiaorg/celestia-node/share/eds"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v2/share"
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
@@ -25,7 +26,6 @@ import (
 	"github.com/spf13/pflag"
 
 	blobstreamx "github.com/succinctlabs/blobstreamx/bindings"
-	"github.com/tendermint/tendermint/rpc/client/http"
 )
 
 type DAConfig struct {
@@ -44,7 +44,6 @@ type DAConfig struct {
 }
 
 type ValidatorConfig struct {
-	TendermintRPC  string `koanf:"tendermint-rpc" reload:"hot"`
 	EthClient      string `koanf:"eth-rpc" reload:"hot"`
 	BlobstreamAddr string `koanf:"blobstream"`
 }
@@ -96,7 +95,6 @@ type CelestiaDA struct {
 }
 
 type CelestiaProver struct {
-	Trpc        *http.HTTP
 	EthClient   *ethclient.Client
 	BlobstreamX *blobstreamx.BlobstreamX
 }
@@ -112,7 +110,6 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.String(prefix+".read-auth-token", "", "Auth token for Celestia Node")
 	f.String(prefix+".keyname", "", "Keyring keyname for Celestia Node for blobs submission")
 	f.Bool(prefix+".noop-writer", false, "Noop writer (disable posting to celestia)")
-	f.String(prefix+".validator-config"+".tendermint-rpc", "", "Tendermint RPC endpoint, only used for validation")
 	f.String(prefix+".validator-config"+".eth-rpc", "", "L1 Websocket connection, only used for validation")
 	f.String(prefix+".validator-config"+".blobstream", "", "Blobstream address, only used for validation")
 	f.Bool(prefix+".dangerous-reorg-on-read-failure", false, "DANGEROUS: reorg if any error during reads from celestia node")
@@ -158,15 +155,6 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 	}
 
 	if cfg.ValidatorConfig != nil {
-		trpc, err := http.New(cfg.ValidatorConfig.TendermintRPC, "/websocket")
-		if err != nil {
-			log.Error("Unable to establish connection with celestia-core tendermint rpc")
-			return nil, err
-		}
-		err = trpc.Start()
-		if err != nil {
-			return nil, err
-		}
 
 		var ethRpc *ethclient.Client
 		if ethClient != nil {
@@ -190,7 +178,6 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 			Namespace:  &namespace,
 			KeyName:    cfg.KeyName,
 			Prover: &CelestiaProver{
-				Trpc:        trpc,
 				EthClient:   ethRpc,
 				BlobstreamX: blobstreamx,
 			},
@@ -207,11 +194,6 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 }
 
 func (c *CelestiaDA) Stop() error {
-	err := c.Prover.Trpc.Stop()
-	if err != nil {
-		log.Warn("Error stoping tendermint rpc client", "err", err)
-		return err
-	}
 	c.Prover.EthClient.Close()
 	c.Client.Close()
 	return nil
@@ -443,7 +425,7 @@ BlobLoop:
 		}
 	}
 
-	eds, err := c.ReadClient.Share.GetEDS(ctx, blobPointer.BlockHeight)
+	extendedSquare, err := c.ReadClient.Share.GetEDS(ctx, blobPointer.BlockHeight)
 	if err != nil {
 		return c.returnErrorHelper(fmt.Errorf("failed to get EDS, height=%v, err=%v", blobPointer.BlockHeight, err))
 	}
@@ -486,7 +468,7 @@ BlobLoop:
 
 	rows := [][][]byte{}
 	for i := startRow; i <= endRow; i++ {
-		rows = append(rows, eds.Row(uint(i)))
+		rows = append(rows, extendedSquare.Row(uint(i)))
 	}
 
 	return &ReadResult{
@@ -566,16 +548,15 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	}
 
 	// get the block data root inclusion proof to the data root tuple root
-	dataRootProof, err := c.Prover.Trpc.DataRootInclusionProof(ctx, blobPointer.BlockHeight, event.StartBlock, event.EndBlock)
+	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(ctx, blobPointer.BlockHeight, event.StartBlock, event.EndBlock)
 	if err != nil {
 		log.Warn("could not get data root proof", "err", err)
 		celestiaValidationFailureCounter.Inc(1)
 		return nil, err
 	}
 
-	// verify that the data root was committed to by the BlobstreamX contract
-	sideNodes := make([][32]byte, len(dataRootProof.Proof.Aunts))
-	for i, aunt := range dataRootProof.Proof.Aunts {
+	sideNodes := make([][32]byte, len((*dataRootProof).Aunts))
+	for i, aunt := range (*dataRootProof).Aunts {
 		sideNodes[i] = *(*[32]byte)(aunt)
 	}
 
@@ -586,8 +567,8 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 
 	proof := blobstreamx.BinaryMerkleProof{
 		SideNodes: sideNodes,
-		Key:       big.NewInt(dataRootProof.Proof.Index),
-		NumLeaves: big.NewInt(dataRootProof.Proof.Total),
+		Key:       big.NewInt((*dataRootProof).Index),
+		NumLeaves: big.NewInt((*dataRootProof).Total),
 	}
 
 	valid, err := c.Prover.BlobstreamX.VerifyAttestation(
@@ -605,7 +586,13 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	log.Info("Verified Celestia Attestation", "height", blobPointer.BlockHeight, "valid", valid)
 
 	if valid {
-		sharesProof, err := c.Prover.Trpc.ProveShares(ctx, blobPointer.BlockHeight, blobPointer.Start, blobPointer.Start+blobPointer.SharesLength)
+		extendedSquare, err := c.Client.Share.GetEDS(ctx, blobPointer.BlockHeight)
+		if err != nil {
+			celestiaValidationFailureCounter.Inc(1)
+			log.Error("Unable to get ShareProof", "err", err)
+			return nil, err
+		}
+		sharesProof, err := eds.ProveShares(extendedSquare, int(blobPointer.Start), int(blobPointer.Start+blobPointer.SharesLength))
 		if err != nil {
 			celestiaValidationFailureCounter.Inc(1)
 			log.Error("Unable to get ShareProof", "err", err)

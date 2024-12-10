@@ -110,7 +110,7 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.String(prefix+".read-auth-token", "", "Auth token for Celestia Node")
 	f.String(prefix+".keyname", "", "Keyring keyname for Celestia Node for blobs submission")
 	f.Bool(prefix+".noop-writer", false, "Noop writer (disable posting to celestia)")
-	f.String(prefix+".validator-config"+".eth-rpc", "", "L1 Websocket connection, only used for validation")
+	f.String(prefix+".validator-config"+".eth-rpc", "", "Parent chain connection, only used for validation")
 	f.String(prefix+".validator-config"+".blobstream", "", "Blobstream address, only used for validation")
 	f.Bool(prefix+".dangerous-reorg-on-read-failure", false, "DANGEROUS: reorg if any error during reads from celestia node")
 }

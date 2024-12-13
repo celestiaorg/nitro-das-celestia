@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
@@ -20,6 +21,7 @@ import (
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -41,6 +43,7 @@ type DAConfig struct {
 	NoopWriter         bool             `koanf:"noop-writer" reload:"hot"`
 	ValidatorConfig    *ValidatorConfig `koanf:"validator-config"`
 	ReorgOnReadFailure bool             `koanf:"dangerous-reorg-on-read-failure"`
+	CacheCleanupTime   time.Duration    `koanf:"cache-time"`
 }
 
 type ValidatorConfig struct {
@@ -92,6 +95,8 @@ type CelestiaDA struct {
 	Namespace *libshare.Namespace
 	Prover    *CelestiaProver
 	KeyName   string
+
+	messageCache sync.Map
 }
 
 type CelestiaProver struct {
@@ -108,11 +113,12 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.String(prefix+".namespace-id", "", "Celestia Namespace to post data to")
 	f.String(prefix+".auth-token", "", "Auth token for Celestia Node")
 	f.String(prefix+".read-auth-token", "", "Auth token for Celestia Node")
-	f.String(prefix+".keyname", "", "Keyring keyname for Celestia Node for blobs submission")
+	f.String(prefix+".keyname", "my_cel_key", "Keyring keyname for Celestia Node for blobs submission")
 	f.Bool(prefix+".noop-writer", false, "Noop writer (disable posting to celestia)")
 	f.String(prefix+".validator-config"+".eth-rpc", "", "Parent chain connection, only used for validation")
 	f.String(prefix+".validator-config"+".blobstream", "", "Blobstream address, only used for validation")
 	f.Bool(prefix+".dangerous-reorg-on-read-failure", false, "DANGEROUS: reorg if any error during reads from celestia node")
+	f.Duration(prefix+".cache-time", time.Hour/2, "how often to clean the in memory cache")
 }
 
 func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, error) {
@@ -171,7 +177,7 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 			return nil, err
 		}
 
-		return &CelestiaDA{
+		da := &CelestiaDA{
 			Cfg:        cfg,
 			Client:     daClient,
 			ReadClient: readClient,
@@ -181,16 +187,24 @@ func NewCelestiaDA(cfg *DAConfig, ethClient *ethclient.Client) (*CelestiaDA, err
 				EthClient:   ethRpc,
 				BlobstreamX: blobstreamx,
 			},
-		}, nil
+		}
+
+		da.StartCacheCleanup(cfg.CacheCleanupTime)
+
+		return da, nil
 
 	}
 
-	return &CelestiaDA{
+	da := &CelestiaDA{
 		Cfg:        cfg,
 		Client:     daClient,
 		ReadClient: readClient,
 		Namespace:  &namespace,
-	}, nil
+	}
+
+	da.StartCacheCleanup(cfg.CacheCleanupTime)
+
+	return da, nil
 }
 
 func (c *CelestiaDA) Stop() error {
@@ -199,12 +213,35 @@ func (c *CelestiaDA) Stop() error {
 	return nil
 }
 
+func (c *CelestiaDA) StartCacheCleanup(cleanupInterval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(cleanupInterval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			// Clear the entire cache periodically
+			c.messageCache = sync.Map{}
+		}
+	}()
+}
+
 func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) {
 	if c.Cfg.NoopWriter {
 		log.Warn("NoopWriter enabled, falling back", "c.Cfg.NoopWriter", c.Cfg.NoopWriter)
 		celestiaFailureCounter.Inc(1)
 		return nil, errors.New("NoopWriter enabled")
 	}
+
+	// Create hash of message to use as cache key
+	msgHash := crypto.Keccak256(message)
+	msgHashHex := hex.EncodeToString(msgHash)
+
+	// Check cache first
+	if pointer, ok := c.messageCache.Load(msgHashHex); ok {
+		log.Info("Retrieved blob pointer from cache", "msgHash", msgHashHex)
+		return pointer.([]byte), nil
+	}
+
 	// set a 5 minute timeout context on submissions
 	// if it takes longer than that to succesfully submit and verify a blob,
 	// then there's an issue with the connection to the celestia node
@@ -368,6 +405,8 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	}
 
 	serializedBlobPointerData := buf.Bytes()
+
+	c.messageCache.Store(msgHashHex, serializedBlobPointerData)
 
 	celestiaSuccessCounter.Inc(1)
 	celestiaDALastSuccesfulActionGauge.Update(time.Now().Unix())

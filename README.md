@@ -41,6 +41,7 @@ Usage of daserver:
       --celestia.rpc string                                Rpc endpoint for celestia-node
       --celestia.validator-config.blobstream string        Blobstream address, only used for validation
       --celestia.validator-config.eth-rpc string           Parent chain connection, only used for validation
+      --celestia.cache-time                                how often to clean the in memory cache
       --enable-rpc                                         enable the HTTP-RPC server listening on rpc-addr and rpc-port
       --log-level string                                   log level, valid values are CRIT, ERROR, WARN, INFO, DEBUG, TRACE (default "INFO")
       --log-type string                                    log type (plaintext or json) (default "plaintext")

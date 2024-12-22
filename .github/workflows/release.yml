@@ -1,0 +1,63 @@
+name: "Release artifacts"
+
+on:
+  release:
+    types:
+      - created
+  workflow_dispatch:
+
+jobs:
+  build-artifacts:
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: [self-hosted, "${{ matrix.arch }}"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: "false"
+          fetch-depth: 0
+
+      - uses: tibdex/github-app-token@v2
+        id: generate-token
+        with:
+          app_id: ${{ secrets.RELEASE_MANAGER_APP_ID }}
+          private_key: ${{ secrets.RELEASE_MANAGER_APP_SECRET }}
+
+      - name: Set env
+        run: |
+          echo "REVISION=nitro-das-celestia-${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+
+      - name: Docker build and push
+        run: |
+          docker build --no-cache -t 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${{ matrix.arch }}-${REVISION} -f Dockerfile .
+          docker push 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${{ matrix.arch }}-${REVISION}
+
+      - name: Lark Notification
+        continue-on-error: true
+        run: |
+          notiv3 "Blockchain nitro image pushed 🎉" 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${{ matrix.arch }}-${REVISION}
+
+  merge-docker-manifest:
+    runs-on: [self-hosted, ops]
+    needs: build-artifacts
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set env
+        run: |
+          echo "REVISION=nitro-das-celestia-${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+
+      - name: Merge manifest
+        run: |
+          docker pull --platform=linux/amd64 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:amd64-${REVISION}
+          docker pull --platform=linux/arm64 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:arm64-${REVISION}
+          docker buildx imagetools create --tag 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${REVISION} 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:amd64-${REVISION} 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:arm64-${REVISION}
+      - name: Lark Notification
+        continue-on-error: true
+        run: |
+          notiv3 "Blockchain nitro image pushed 🎉" 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${REVISION}

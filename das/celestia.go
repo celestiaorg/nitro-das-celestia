@@ -599,38 +599,6 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		rowProof := toRowProofs((sharesProof.RowProof.Proofs[0]))
 		attestationProof := toAttestationProof(event.ProofNonce.Uint64(), blobPointer.BlockHeight, blobPointer.DataRoot, dataRootProof)
 
-		caller, err := celestiagen.NewCelestiaBatchVerifier(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
-
-		// Rest of the call remains the same
-		verifyProofResult, err := caller.VerifyProof(
-			&bind.CallOpts{},
-			common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr),
-			celestiagen.NamespaceNode{
-				Min:    celestiagen.Namespace(namespaceNode.Min),
-				Max:    celestiagen.Namespace(namespaceNode.Max),
-				Digest: namespaceNode.Digest,
-			},
-			celestiagen.BinaryMerkleProof{
-				SideNodes: rowProof.SideNodes,
-				Key:       rowProof.Key,
-				NumLeaves: rowProof.Key,
-			},
-			celestiagen.AttestationProof{
-				TupleRootNonce: attestationProof.TupleRootNonce,
-				Tuple:          celestiagen.DataRootTuple(attestationProof.Tuple),
-				Proof: celestiagen.BinaryMerkleProof{
-					SideNodes: attestationProof.Proof.SideNodes,
-					Key:       attestationProof.Proof.Key,
-					NumLeaves: attestationProof.Proof.Key,
-				},
-			},
-		)
-
-		if !verifyProofResult.IsValid {
-			celestiaValidationFailureCounter.Inc(1)
-			log.Error("Failed to verify proof before onchain submission", "err", err)
-			return nil, err
-		}
 		celestiaVerifierAbi, err := celestiagen.CelestiaBatchVerifierMetaData.GetAbi()
 		if err != nil {
 			celestiaValidationFailureCounter.Inc(1)

@@ -1,6 +1,6 @@
 module github.com/celestiaorg/nitro-das-celestia
 
-go 1.23.2
+go 1.23.5
 
 require (
 	github.com/celestiaorg/celestia-node v0.20.4

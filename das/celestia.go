@@ -14,7 +14,6 @@ import (
 
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
-	eds "github.com/celestiaorg/celestia-node/share/eds"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v2/share"
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
@@ -586,23 +585,52 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	log.Info("Verified Celestia Attestation", "height", blobPointer.BlockHeight, "valid", valid)
 
 	if valid {
-		extendedSquare, err := c.Client.Share.GetEDS(ctx, blobPointer.BlockHeight)
+
+		rangeResult, err := c.Client.Share.GetRange(ctx, blobPointer.BlockHeight, int(blobPointer.Start), int(blobPointer.Start+blobPointer.SharesLength))
 		if err != nil {
 			celestiaValidationFailureCounter.Inc(1)
 			log.Error("Unable to get ShareProof", "err", err)
 			return nil, err
 		}
-		sharesProof, err := eds.ProveShares(extendedSquare, int(blobPointer.Start), int(blobPointer.Start+blobPointer.SharesLength))
-		if err != nil {
-			celestiaValidationFailureCounter.Inc(1)
-			log.Error("Unable to get ShareProof", "err", err)
-			return nil, err
-		}
+
+		sharesProof := rangeResult.Proof
 
 		namespaceNode := toNamespaceNode(sharesProof.RowProof.RowRoots[0])
 		rowProof := toRowProofs((sharesProof.RowProof.Proofs[0]))
 		attestationProof := toAttestationProof(event.ProofNonce.Uint64(), blobPointer.BlockHeight, blobPointer.DataRoot, dataRootProof)
 
+		caller, err := celestiagen.NewCelestiaBatchVerifier(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
+
+		// Rest of the call remains the same
+		verifyProofResult, err := caller.VerifyProof(
+			&bind.CallOpts{},
+			common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr),
+			celestiagen.NamespaceNode{
+				Min:    celestiagen.Namespace(namespaceNode.Min),
+				Max:    celestiagen.Namespace(namespaceNode.Max),
+				Digest: namespaceNode.Digest,
+			},
+			celestiagen.BinaryMerkleProof{
+				SideNodes: rowProof.SideNodes,
+				Key:       rowProof.Key,
+				NumLeaves: rowProof.Key,
+			},
+			celestiagen.AttestationProof{
+				TupleRootNonce: attestationProof.TupleRootNonce,
+				Tuple:          celestiagen.DataRootTuple(attestationProof.Tuple),
+				Proof: celestiagen.BinaryMerkleProof{
+					SideNodes: attestationProof.Proof.SideNodes,
+					Key:       attestationProof.Proof.Key,
+					NumLeaves: attestationProof.Proof.Key,
+				},
+			},
+		)
+
+		if !verifyProofResult.IsValid {
+			celestiaValidationFailureCounter.Inc(1)
+			log.Error("Failed to verify proof before onchain submission", "err", err)
+			return nil, err
+		}
 		celestiaVerifierAbi, err := celestiagen.CelestiaBatchVerifierMetaData.GetAbi()
 		if err != nil {
 			celestiaValidationFailureCounter.Inc(1)

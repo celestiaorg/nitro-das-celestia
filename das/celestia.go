@@ -46,6 +46,7 @@ type DAConfig struct {
 type ValidatorConfig struct {
 	EthClient      string `koanf:"eth-rpc" reload:"hot"`
 	BlobstreamAddr string `koanf:"blobstream" reload:"hot"`
+	SleepTime      int    `koanf:"slee-time" reload:"hot"`
 }
 
 var (
@@ -106,6 +107,7 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Bool(prefix+".noop-writer", false, "Noop writer (disable posting to celestia)")
 	f.String(prefix+".validator-config"+".eth-rpc", "", "Parent chain connection, only used for validation")
 	f.String(prefix+".validator-config"+".blobstream", "", "Blobstream address, only used for validation")
+	f.Int(prefix+".validator-config"+".sleep-time", 3600, "How many seconds to wait before initiating another filtering loop for Blobstream events")
 	f.Bool(prefix+".dangerous-reorg-on-read-failure", false, "DANGEROUS: reorg if any error during reads from celestia node")
 	f.Duration(prefix+".cache-time", time.Hour/2, "how often to clean the in memory cache")
 }
@@ -585,7 +587,6 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	log.Info("Verified Celestia Attestation", "height", blobPointer.BlockHeight, "valid", valid)
 
 	if valid {
-
 		rangeResult, err := c.Client.Share.GetRange(ctx, blobPointer.BlockHeight, int(blobPointer.Start), int(blobPointer.Start+blobPointer.SharesLength))
 		if err != nil {
 			celestiaValidationFailureCounter.Inc(1)
@@ -628,8 +629,6 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	return nil, err
 }
 
-// write GetProofWithClient method that establishes a new connection with an eth node and creates the necessary wrapper
-
 func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 	blobstream *blobstreamx.BlobstreamX, latestBlock uint64, celestiaHeight uint64, backwards bool) (*blobstreamx.BlobstreamXDataCommitmentStored, error) {
 	// Geth has a default of 5000 block limit for filters
@@ -639,7 +638,11 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 	}
 	end := latestBlock
 
-	for attempt := 0; attempt < 11; attempt++ {
+	for {
+		// Check context before each iteration
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("context cancelled or deadline exceeded: %w", err)
+		}
 		eventsIterator, err := blobstream.FilterDataCommitmentStored(
 			&bind.FilterOpts{
 				Context: ctx,
@@ -692,7 +695,13 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 				end -= 5000
 			}
 		} else {
-			time.Sleep(time.Second * 3600)
+			// Make the sleep cancellable with context
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second * time.Duration(c.Cfg.ValidatorConfig.SleepTime)):
+			}
+
 			latestBlockNumber, err := ethRpc.BlockNumber(context.Background())
 			if err != nil {
 				return nil, err
@@ -702,8 +711,6 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 			end = latestBlockNumber
 		}
 	}
-
-	return nil, fmt.Errorf("unable to find Data Commitment Stored event in Blobstream")
 }
 
 func (c *CelestiaDA) returnErrorHelper(err error) (*ReadResult, error) {

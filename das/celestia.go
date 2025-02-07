@@ -46,7 +46,7 @@ type DAConfig struct {
 type ValidatorConfig struct {
 	EthClient      string `koanf:"eth-rpc" reload:"hot"`
 	BlobstreamAddr string `koanf:"blobstream" reload:"hot"`
-	SleepTime      int    `koanf:"slee-time" reload:"hot"`
+	SleepTime      int    `koanf:"sleep-time" reload:"hot"`
 }
 
 var (

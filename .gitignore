@@ -1,1 +1,2 @@
-./cmd/celestia-server
+/cmd/celestia-server
+.env

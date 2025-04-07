@@ -167,9 +167,7 @@ func startup() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// todo: add comething to zero out Validator config
-	serverConfig.CelestiaDa.ValidatorConfig = nil
-	celestiaDA, err := das.NewCelestiaDA(&serverConfig.CelestiaDa, nil)
+	celestiaDA, err := das.NewCelestiaDA(&serverConfig.CelestiaDa)
 	var celestiaReader das.CelestiaReader
 	var celestiaWriter das.CelestiaWriter
 	var rpcServer *http.Server

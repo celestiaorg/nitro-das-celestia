@@ -31,13 +31,13 @@ jobs:
 
       - name: Docker build and push
         run: |
-          docker build --no-cache -t 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${{ matrix.arch }}-${REVISION} -f Dockerfile .
-          docker push 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${{ matrix.arch }}-${REVISION}
+          docker build --no-cache -t 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:${{ matrix.arch }}-${REVISION} -f Dockerfile .
+          docker push 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:${{ matrix.arch }}-${REVISION}
 
       - name: Lark Notification
         continue-on-error: true
         run: |
-          notiv3 "Blockchain nitro image pushed 🎉" 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${{ matrix.arch }}-${REVISION}
+          notiv3 "Blockchain nitro image pushed 🎉" 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:${{ matrix.arch }}-${REVISION}
 
   merge-docker-manifest:
     runs-on: [self-hosted, ops]
@@ -54,10 +54,10 @@ jobs:
 
       - name: Merge manifest
         run: |
-          docker pull --platform=linux/amd64 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:amd64-${REVISION}
-          docker pull --platform=linux/arm64 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:arm64-${REVISION}
-          docker buildx imagetools create --tag 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${REVISION} 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:amd64-${REVISION} 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:arm64-${REVISION}
+          docker pull --platform=linux/amd64 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:amd64-${REVISION}
+          docker pull --platform=linux/arm64 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:arm64-${REVISION}
+          docker buildx imagetools create --tag 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:${REVISION} 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:amd64-${REVISION} 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:arm64-${REVISION}
       - name: Lark Notification
         continue-on-error: true
         run: |
-          notiv3 "Blockchain nitro image pushed 🎉" 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-node:${REVISION}
+          notiv3 "Blockchain nitro image pushed 🎉" 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:${REVISION}

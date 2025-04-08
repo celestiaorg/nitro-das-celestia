@@ -337,11 +337,6 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 
 func (c *CelestiaDA) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadResult, error) {
 	// Wait until our client is synced
-	err := c.ReadClient.Header.SyncWait(ctx)
-	if err != nil {
-		log.Error("trouble with client sync", "err", err)
-		return nil, err
-	}
 
 	header, err := c.ReadClient.Header.GetByHeight(ctx, blobPointer.BlockHeight)
 	if err != nil {

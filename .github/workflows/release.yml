@@ -27,7 +27,7 @@ jobs:
 
       - name: Set env
         run: |
-          echo "REVISION=nitro-das-celestia-${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+          echo "REVISION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
 
       - name: Docker build and push
         run: |

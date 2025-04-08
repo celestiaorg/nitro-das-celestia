@@ -241,33 +241,6 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 		celestiaLastNonDefaultGasprice.Update(gasPrice)
 	}
 
-	proofs, err := c.ReadClient.Blob.GetProof(ctx, height, *c.Namespace, dataBlob.Commitment)
-	if err != nil {
-		celestiaFailureCounter.Inc(1)
-		log.Warn("Error retrieving proof", "err", err)
-		return nil, err
-	}
-
-	proofRetries := 0
-	for proofs == nil {
-		log.Warn("Retrieved empty proof from GetProof, fetching again...", "proofRetries", proofRetries)
-		time.Sleep(time.Millisecond * 100)
-		proofs, err = c.ReadClient.Blob.GetProof(ctx, height, *c.Namespace, dataBlob.Commitment)
-		if err != nil {
-			celestiaFailureCounter.Inc(1)
-			log.Warn("Error retrieving proof", "err", err)
-			return nil, err
-		}
-		proofRetries++
-		celestiaBlobInclusionRetries.Inc(1)
-	}
-
-	included, err := c.ReadClient.Blob.Included(ctx, height, *c.Namespace, proofs, dataBlob.Commitment)
-	if err != nil || !included {
-		celestiaFailureCounter.Inc(1)
-		log.Warn("Error checking for inclusion", "err", err, "proof", proofs)
-		return nil, err
-	}
 	log.Info("Succesfully posted blob", "height", height, "commitment", hex.EncodeToString(dataBlob.Commitment))
 
 	// we fetch the blob so that we can get the correct start index in the square

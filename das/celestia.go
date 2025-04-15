@@ -55,7 +55,6 @@ var (
 	celestiaSuccessCounter             = metrics.NewRegisteredCounter("celestia/action/celestia_success", nil)
 	celestiaFailureCounter             = metrics.NewRegisteredCounter("celestia/action/celestia_failure", nil)
 	celestiaGasRetries                 = metrics.NewRegisteredCounter("celestia/action/gas_retries", nil)
-	celestiaBlobInclusionRetries       = metrics.NewRegisteredCounter("celestia/action/inclusion_retries", nil)
 
 	celestiaValidationLastSuccesfulActionGauge = metrics.NewRegisteredGauge("celestia/validation/last_success", nil)
 	celestiaValidationSuccessCounter           = metrics.NewRegisteredCounter("celestia/validation/blobstream_success", nil)
@@ -336,8 +335,6 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 }
 
 func (c *CelestiaDA) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadResult, error) {
-	// Wait until our client is synced
-
 	header, err := c.ReadClient.Header.GetByHeight(ctx, blobPointer.BlockHeight)
 	if err != nil {
 		log.Error("could not fetch header", "err", err)

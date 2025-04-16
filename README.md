@@ -15,7 +15,8 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
 
 ```
 ./celestia-server --enable-rpc --rpc-addr $RPC_ADDR \
-      --rpc-port $RPC_PORT --celestia.auth-token $AUTH_TOKEN \
+      --rpc-port $RPC_PORT \
+      --celestia.auth-token $AUTH_TOKEN \
       --celestia.gas-price $GAS_PRICE \
       --celestia.gas-multiplier $GAS_MULTIPLIER \
       --celestia.namespace-id $NAMESPACEID \

@@ -8,7 +8,7 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
 
 ## Docker
 
-`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.4.2`
+`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.4.3`
 
 
 ## Example usage
@@ -22,6 +22,21 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
       --celestia.namespace-id $NAMESPACEID \
       --celestia.rpc $CELESTIA_NODE_ENDPOINT 
 ```
+
+## Running Docker Image
+
+```
+docker run --name celestia-server \
+      -p 26657:26657 \
+      -e AUTH_TOKEN=your_token  \
+      -e NAMESPACEID=your_namespace  \
+      -e CELESTIA_NODE_ENDPOINT=your_node_endpoint \
+      ghcr.io/celestiaorg/nitro-das-celestia:v0.4.3
+```
+
+## Example Docker Compose
+
+For an example on how to use the images in conjunction with other containers, check the [docker-compose.yaml](https://github.com/celestiaorg/nitro-das-celestia/blob/main/docker-compose.yaml) in this repository for an example
 
 ## Flags
 

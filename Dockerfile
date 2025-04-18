@@ -4,7 +4,7 @@
 #
 # Separating the builder and runtime image allows the runtime image to be
 # considerably smaller because it doesn't need to have Golang installed.
-ARG BUILDER_IMAGE=docker.io/golang:1.23.5-alpine
+ARG BUILDER_IMAGE=docker.io/golang:1.23.6-alpine
 ARG RUNTIME_IMAGE=docker.io/alpine:3.19.1
 ARG TARGETOS
 ARG TARGETARCH
@@ -42,11 +42,7 @@ ARG UID=10001
 ARG USER_NAME=apollo
 ENV APOLLO_HOME=/home/${USER_NAME}
 
-ENV RPC_ADDR=""
-ENV RPC_PORT=""
 ENV AUTH_TOKEN=""
-ENV GAS_PRICE=""
-ENV GAS_MULTIPLIER=""
 ENV NAMESPACEID=""
 ENV CELESTIA_NODE_ENDPOINT=""
 
@@ -69,4 +65,4 @@ USER ${USER_NAME}
 
 # Expose ports:
 EXPOSE 1317 9090 26657 1095 8080 26658
-ENTRYPOINT ["sh", "-c", "/bin/celestia-server --enable-rpc --rpc-addr $RPC_ADDR --rpc-port $RPC_PORT --celestia.auth-token $AUTH_TOKEN --celestia.gas-price $GAS_PRICE --celestia.gas-multiplier $GAS_MULTIPLIER --celestia.namespace-id $NAMESPACEID --celestia.rpc $CELESTIA_NODE_ENDPOINT"]
+ENTRYPOINT ["sh", "-c", "/bin/celestia-server --celestia.auth-token $AUTH_TOKEN --celestia.namespace-id $NAMESPACEID --celestia.rpc $CELESTIA_NODE_ENDPOINT"]

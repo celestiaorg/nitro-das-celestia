@@ -8,19 +8,19 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
 
 ## Docker
 
-`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.4.0`
+`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.4.2`
 
 
 ## Example usage
 
 ```
 ./celestia-server --enable-rpc --rpc-addr $RPC_ADDR \
-      --rpc-port $RPC_PORT --celestia.auth-token $AUTH_TOKEN \
+      --rpc-port $RPC_PORT \
+      --celestia.auth-token $AUTH_TOKEN \
       --celestia.gas-price $GAS_PRICE \
       --celestia.gas-multiplier $GAS_MULTIPLIER \
       --celestia.namespace-id $NAMESPACEID \
-      --celestia.rpc $CELESTIA_NODE_ENDPOINT \
-      --celestia.keyname $KEYNAME
+      --celestia.rpc $CELESTIA_NODE_ENDPOINT 
 ```
 
 ## Flags

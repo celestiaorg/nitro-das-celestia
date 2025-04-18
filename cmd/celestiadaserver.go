@@ -42,7 +42,7 @@ type CelestiaDAServerConfig struct {
 }
 
 var DefaultCelestiaDAServerConfig = CelestiaDAServerConfig{
-	EnableRPC:          false,
+	EnableRPC:          true,
 	RPCAddr:            "localhost",
 	RPCPort:            9876,
 	RPCServerTimeouts:  genericconf.HTTPServerTimeoutConfigDefault,

@@ -76,6 +76,17 @@ Usage of daserver:
       --rpc-server-timeouts.write-timeout duration         the maximum duration before timing out writes of the response (http.Server.WriteTimeout) (default 30s)
 ```
 
+## Running a Full Node
+
+If you are running a celestia-server as part of a full node setup for an orbit x celestia da chain, note the folloing:
+
+- you don't need to provide a `gas-price` or a `gas-multiplier`, since the node won't be submitting data to celestia
+- you should run this on the same machine as your nitro full node or block the `store` endpoint if you are not running a batch poster
+- you only need a namespace to use when fetching data from Celestia (the rollup should make this clear and accesible to you), and a celestia-node endpoint (core / consensus endpoints won't work!). If you do not wish to run your own celestia light node, or da bridge node, you can get a hosted endpoint from providers like:
+  - [Quicknode](https://www.quicknode.com/docs/celestia)
+
+
+
 ## Running a Validator
 >[!CAUTION]
 > The celestia server binary won't throw an error if you forget to set the validator config, if you are running validators for your chain, please read carefully

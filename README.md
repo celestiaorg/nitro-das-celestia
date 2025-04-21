@@ -76,6 +76,20 @@ Usage of daserver:
       --rpc-server-timeouts.write-timeout duration         the maximum duration before timing out writes of the response (http.Server.WriteTimeout) (default 30s)
 ```
 
+## Running a da server for an Orbit x Celestia chain
+
+Before proceeding, it is highly encouraged to familiarize yourself with [Celestia](https://docs.celestia.org/) and more specifically with [DA Nodes](https://docs.celestia.org/how-to-guides/light-node) (light, full, bridge)
+
+## Running a Batch Poster
+
+If you are running a celestia-sever for a batch poster node, you need to take the following into account:
+
+- if you don't provide a `gas-price` and a `gas-multipler`, you will be automatically opting for gas estimation from your celestia-node
+- you should run this on the same machine as your nitro batch poster node
+- you WILL NOT be able to use a hosted provider for your celestia-node endpoint. You will have to run your own celestia-node in order to post data to Celestia
+- you can get the `auth token` for your node like [this](https://docs.celestia.org/how-to-guides/quick-start#get-your-auth-token)
+- you will need to pick a [namespace](https://docs.celestia.org/tutorials/node-tutorial#namespaces) were to write data to and make sure to use this in other nodes and share with node runners.
+
 ## Running a Full Node
 
 If you are running a celestia-server as part of a full node setup for an orbit x celestia da chain, note the folloing:

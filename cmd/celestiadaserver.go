@@ -20,7 +20,8 @@ import (
 	"github.com/offchainlabs/nitro/cmd/util/confighelpers"
 	"github.com/offchainlabs/nitro/util/headerreader"
 
-	"github.com/celestiaorg/nitro-das-celestia/das"
+	das "github.com/celestiaorg/nitro-das-celestia/daserver"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 )
 
 type CelestiaDAServerConfig struct {
@@ -168,8 +169,8 @@ func startup() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	celestiaDA, err := das.NewCelestiaDA(&serverConfig.CelestiaDa)
-	var celestiaReader das.CelestiaReader
-	var celestiaWriter das.CelestiaWriter
+	var celestiaReader types.CelestiaReader
+	var celestiaWriter types.CelestiaWriter
 	var rpcServer *http.Server
 	if serverConfig.EnableRPC {
 		if err != nil {

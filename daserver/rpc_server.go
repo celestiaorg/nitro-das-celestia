@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -16,6 +17,11 @@ import (
 
 	"github.com/ethereum/go-ethereum/rpc"
 )
+
+type Server struct {
+	reader types.Reader
+	writer types.Writer
+}
 
 var (
 	rpcStoreRequestGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/store/requests", nil)
@@ -38,11 +44,11 @@ var (
 )
 
 type CelestiaDASRPCServer struct {
-	celestiaReader CelestiaReader
-	celestiaWriter CelestiaWriter
+	celestiaReader types.CelestiaReader
+	celestiaWriter types.CelestiaWriter
 }
 
-func StartDASRPCServer(ctx context.Context, addr string, portNum uint64, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader CelestiaReader, celestiaWriter CelestiaWriter) (*http.Server, error) {
+func StartDASRPCServer(ctx context.Context, addr string, portNum uint64, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter) (*http.Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", addr, portNum))
 	if err != nil {
 		return nil, err
@@ -50,9 +56,9 @@ func StartDASRPCServer(ctx context.Context, addr string, portNum uint64, rpcServ
 	return StartCelestiaDASRPCServerOnListener(ctx, listener, rpcServerTimeouts, rpcServerBodyLimit, celestiaReader, celestiaWriter)
 }
 
-func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Listener, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader CelestiaReader, celestiaWriter CelestiaWriter) (*http.Server, error) {
+func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Listener, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter) (*http.Server, error) {
 	if celestiaWriter == nil {
-		return nil, errors.New("No writer backend was configured for Celestia DAS RPC server. Please setup a node and ensure a connections is being established")
+		return nil, errors.New("no writer backend was configured for Celestia DAS RPC server. Please setup a node and ensure a connections is being established")
 	}
 	rpcServer := rpc.NewServer()
 	if rpcServerBodyLimit > 0 {
@@ -62,6 +68,18 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 		celestiaReader: celestiaReader,
 		celestiaWriter: celestiaWriter,
 	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	server := &Server{
+		reader: types.NewReaderForCelestia(celestiaReader),
+		writer: types.NewWriterForCelestia(celestiaWriter),
+	}
+
+	err = rpcServer.RegisterName("daprovider", server)
+
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +128,7 @@ func (serv *CelestiaDASRPCServer) Store(ctx context.Context, message hexutil.Byt
 	return result, nil
 }
 
-func (serv *CelestiaDASRPCServer) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadResult, error) {
+func (serv *CelestiaDASRPCServer) Read(ctx context.Context, blobPointer *types.BlobPointer) (*types.ReadResult, error) {
 	log.Trace("celestiaDasRpc.CelestiaDASRPCServer.Read", "blob pointer", blobPointer, "this", serv)
 	rpcReadRequestGauge.Inc(1)
 	start := time.Now()

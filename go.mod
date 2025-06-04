@@ -49,8 +49,8 @@ require (
 	github.com/celestiaorg/go-square v1.1.1 // indirect
 	github.com/celestiaorg/go-square/merkle v0.0.0-20240429192549-dea967e1533b // indirect
 	github.com/celestiaorg/merkletree v0.0.0-20230308153949-c33506a7aa26 // indirect
-	github.com/celestiaorg/nmt v0.23.0 // indirect
-	github.com/celestiaorg/rsmt2d v0.14.0 // indirect
+	github.com/celestiaorg/nmt v0.23.0
+	github.com/celestiaorg/rsmt2d v0.14.0
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

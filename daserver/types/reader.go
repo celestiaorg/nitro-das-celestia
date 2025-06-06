@@ -7,6 +7,7 @@ import (
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/offchainlabs/nitro/arbutil"
 )
@@ -44,6 +45,16 @@ func RecordPreimagesTo(preimages PreimagesMap) PreimageRecorder {
 		}
 		preimages[ty][key] = value
 	}
+}
+
+// RecoverPayloadFromBatchResult is the result struct that data availability providers should use to respond with underlying payload and updated preimages map to a RecoverPayloadFromBatch fetch request
+type RecoverPayloadFromBatchResult struct {
+	Payload   hexutil.Bytes `json:"payload,omitempty"`
+	Preimages PreimagesMap  `json:"preimages,omitempty"`
+}
+
+type IsValidHeaderByteResult struct {
+	IsValid bool `json:"is-valid,omitempty"`
 }
 
 func NewReaderForCelestia(celestiaReader CelestiaReader) *readerForCelestia {

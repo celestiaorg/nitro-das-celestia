@@ -3,6 +3,8 @@ package types
 import (
 	"context"
 	"errors"
+
+	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 type Writer interface {
@@ -22,6 +24,10 @@ func NewWriterForCelestia(celestiaWriter CelestiaWriter) *writerForCelestia {
 
 type writerForCelestia struct {
 	celestiaWriter CelestiaWriter
+}
+
+type StoreResult struct {
+	SerializedResult hexutil.Bytes `json:"serialized-da-cert,omitempty"`
 }
 
 func (c *writerForCelestia) Store(ctx context.Context, message []byte, timeout uint64, disableFallbackStoreDataOnChain bool) ([]byte, error) {

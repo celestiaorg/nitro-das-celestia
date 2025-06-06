@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -17,11 +18,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/rpc"
 )
-
-type Server struct {
-	reader types.Reader
-	writer types.Writer
-}
 
 var (
 	rpcStoreRequestGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/store/requests", nil)
@@ -42,6 +38,11 @@ var (
 	rpcProofBytesGauge        = metrics.NewRegisteredGauge("celestia/das/rpc/proof/bytes", nil)
 	rpcProofDurationHistogram = metrics.NewRegisteredHistogram("celestia/das/rpc/proof/duration", nil, metrics.NewBoundedHistogramSample())
 )
+
+type DaClientServer struct {
+	reader types.Reader
+	writer types.Writer
+}
 
 type CelestiaDASRPCServer struct {
 	celestiaReader types.CelestiaReader
@@ -73,7 +74,7 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 		return nil, err
 	}
 
-	server := &Server{
+	server := &DaClientServer{
 		reader: types.NewReaderForCelestia(celestiaReader),
 		writer: types.NewWriterForCelestia(celestiaWriter),
 	}
@@ -172,4 +173,39 @@ func (serv *CelestiaDASRPCServer) GetProof(ctx context.Context, msg []byte) ([]b
 	rpcProofBytesGauge.Inc(int64(len(proof)))
 	success = true
 	return proof, nil
+}
+
+func (serv *DaClientServer) RecoverPayloadFromBatch(
+	ctx context.Context,
+	batchNum hexutil.Uint64,
+	batchBlockHash common.Hash,
+	sequencerMsg hexutil.Bytes,
+	preimages types.PreimagesMap,
+	validateSeqMsg bool,
+) (*types.RecoverPayloadFromBatchResult, error) {
+	payload, preimages, err := serv.reader.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
+	if err != nil {
+		return nil, err
+	}
+	return &types.RecoverPayloadFromBatchResult{
+		Payload:   payload,
+		Preimages: preimages,
+	}, nil
+}
+
+func (serv *DaClientServer) IsValidHeaderByte(ctx context.Context, headerByte byte) (*types.IsValidHeaderByteResult, error) {
+	return &types.IsValidHeaderByteResult{IsValid: serv.reader.IsValidHeaderByte(ctx, headerByte)}, nil
+}
+
+func (serv *DaClientServer) Store(
+	ctx context.Context,
+	message hexutil.Bytes,
+	timeout hexutil.Uint64,
+	disableFallbackStoreDataOnChain bool,
+) (*types.StoreResult, error) {
+	result, err := serv.writer.Store(ctx, message, uint64(timeout), disableFallbackStoreDataOnChain)
+	if err != nil {
+		return nil, err
+	}
+	return &types.StoreResult{SerializedResult: result}, nil
 }

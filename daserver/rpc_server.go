@@ -40,8 +40,10 @@ var (
 )
 
 type DaClientServer struct {
-	reader types.Reader
-	writer types.Writer
+	reader    types.Reader
+	writer    types.Writer
+	dasClient *Client
+	fallback  bool
 }
 
 type CelestiaDASRPCServer struct {
@@ -49,15 +51,15 @@ type CelestiaDASRPCServer struct {
 	celestiaWriter types.CelestiaWriter
 }
 
-func StartDASRPCServer(ctx context.Context, addr string, portNum uint64, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter) (*http.Server, error) {
+func StartDASRPCServer(ctx context.Context, addr string, portNum uint64, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter, dasClient *Client, fallbackEnabled bool) (*http.Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", addr, portNum))
 	if err != nil {
 		return nil, err
 	}
-	return StartCelestiaDASRPCServerOnListener(ctx, listener, rpcServerTimeouts, rpcServerBodyLimit, celestiaReader, celestiaWriter)
+	return StartCelestiaDASRPCServerOnListener(ctx, listener, rpcServerTimeouts, rpcServerBodyLimit, celestiaReader, celestiaWriter, dasClient, fallbackEnabled)
 }
 
-func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Listener, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter) (*http.Server, error) {
+func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Listener, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter, dasClient *Client, fallbackEnabled bool) (*http.Server, error) {
 	if celestiaWriter == nil {
 		return nil, errors.New("no writer backend was configured for Celestia DAS RPC server. Please setup a node and ensure a connections is being established")
 	}
@@ -75,8 +77,10 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 	}
 
 	server := &DaClientServer{
-		reader: types.NewReaderForCelestia(celestiaReader),
-		writer: types.NewWriterForCelestia(celestiaWriter),
+		reader:    types.NewReaderForCelestia(celestiaReader),
+		writer:    types.NewWriterForCelestia(celestiaWriter),
+		dasClient: dasClient,
+		fallback:  fallbackEnabled,
 	}
 
 	err = rpcServer.RegisterName("daprovider", server)
@@ -185,7 +189,16 @@ func (serv *DaClientServer) RecoverPayloadFromBatch(
 ) (*types.RecoverPayloadFromBatchResult, error) {
 	payload, preimages, err := serv.reader.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
 	if err != nil {
-		return nil, err
+		// fallback to das
+		if serv.fallback {
+			log.Info("Reading payload from Anytrust DAS")
+			payload, preimages, err = serv.dasClient.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
 	return &types.RecoverPayloadFromBatchResult{
 		Payload:   payload,
@@ -194,7 +207,18 @@ func (serv *DaClientServer) RecoverPayloadFromBatch(
 }
 
 func (serv *DaClientServer) IsValidHeaderByte(ctx context.Context, headerByte byte) (*types.IsValidHeaderByteResult, error) {
-	return &types.IsValidHeaderByteResult{IsValid: serv.reader.IsValidHeaderByte(ctx, headerByte)}, nil
+	valid := serv.reader.IsValidHeaderByte(ctx, headerByte)
+	// fallback to das
+	if !valid && serv.fallback {
+		log.Info("Verifying valid header byte against Anytrust DAS")
+		var err error
+		valid, err = serv.dasClient.IsValidHeaderByte(ctx, headerByte)
+		if err != nil {
+			log.Info("Could not deserialize DasHeaderByte")
+			return nil, err
+		}
+	}
+	return &types.IsValidHeaderByteResult{IsValid: valid}, nil
 }
 
 func (serv *DaClientServer) Store(
@@ -205,7 +229,17 @@ func (serv *DaClientServer) Store(
 ) (*types.StoreResult, error) {
 	result, err := serv.writer.Store(ctx, message, uint64(timeout), disableFallbackStoreDataOnChain)
 	if err != nil {
-		return nil, err
+		// fallback to das
+		if serv.fallback {
+			log.Info("Falling back to write data to Anytrust DAS")
+			result, err = serv.dasClient.Store(ctx, message, uint64(timeout), disableFallbackStoreDataOnChain)
+			if err != nil {
+				return nil, err
+			}
+			log.Info("Succesfully wrote data to anytrust daprovider", "result", result)
+		} else {
+			return nil, err
+		}
 	}
 	return &types.StoreResult{SerializedResult: result}, nil
 }

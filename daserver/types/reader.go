@@ -113,11 +113,11 @@ func RecoverPayloadFromCelestiaBatch(
 	header, err := buf.ReadByte()
 	if err != nil {
 		log.Error("Couldn't deserialize Celestia header byte", "err", err)
-		return nil, nil, nil
+		return nil, nil, errors.New("tried to deserialize a message that doesn't have the Celestia header")
 	}
 	if !IsCelestiaMessageHeaderByte(header) {
 		log.Error("Couldn't deserialize Celestia header byte", "err", errors.New("tried to deserialize a message that doesn't have the Celestia header"))
-		return nil, nil, nil
+		return nil, nil, errors.New("tried to deserialize a message that doesn't have the Celestia header")
 	}
 
 	blobPointer := BlobPointer{}

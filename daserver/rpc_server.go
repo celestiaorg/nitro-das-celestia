@@ -14,7 +14,10 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
+	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/offchainlabs/nitro/util/pretty"
+
+	"github.com/offchainlabs/nitro/daprovider/daclient"
 
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -24,25 +27,25 @@ var (
 	rpcStoreSuccessGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/store/success", nil)
 	rpcStoreFailureGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/store/failure", nil)
 	rpcStoreStoredBytesGauge  = metrics.NewRegisteredGauge("celestia/das/rpc/store/bytes", nil)
-	rpcStoreDurationHistogram = metrics.NewRegisteredHistogram("celestia/das/rpc/store/duration", nil, metrics.NewBoundedHistogramSample())
+	rpcStoreDurationHistogram = metrics.NewRegisteredHistogram("celestia/das/rpc/store/duration", nil, metrics.NewExpDecaySample(1024, 0.015))
 
 	rpcReadRequestGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/read/requests", nil)
 	rpcReadSuccessGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/read/success", nil)
 	rpcReadFailureGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/read/failure", nil)
 	rpcReadReadBytesGauge    = metrics.NewRegisteredGauge("celestia/das/rpc/read/bytes", nil)
-	rpcReadDurationHistogram = metrics.NewRegisteredHistogram("celestia/das/rpc/read/duration", nil, metrics.NewBoundedHistogramSample())
+	rpcReadDurationHistogram = metrics.NewRegisteredHistogram("celestia/das/rpc/read/duration", nil, metrics.NewExpDecaySample(1024, 0.015))
 
 	rpcProofRequestGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/proof/requests", nil)
 	rpcProofSuccessGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/proof/success", nil)
 	rpcProofFailureGauge      = metrics.NewRegisteredGauge("celestia/das/rpc/proof/failure", nil)
 	rpcProofBytesGauge        = metrics.NewRegisteredGauge("celestia/das/rpc/proof/bytes", nil)
-	rpcProofDurationHistogram = metrics.NewRegisteredHistogram("celestia/das/rpc/proof/duration", nil, metrics.NewBoundedHistogramSample())
+	rpcProofDurationHistogram = metrics.NewRegisteredHistogram("celestia/das/rpc/proof/duration", nil, metrics.NewExpDecaySample(1024, 0.015))
 )
 
 type DaClientServer struct {
 	reader    types.Reader
 	writer    types.Writer
-	dasClient *Client
+	dasClient *daclient.Client
 	fallback  bool
 }
 
@@ -51,7 +54,7 @@ type CelestiaDASRPCServer struct {
 	celestiaWriter types.CelestiaWriter
 }
 
-func StartDASRPCServer(ctx context.Context, addr string, portNum uint64, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter, dasClient *Client, fallbackEnabled bool) (*http.Server, error) {
+func StartDASRPCServer(ctx context.Context, addr string, portNum uint64, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter, dasClient *daclient.Client, fallbackEnabled bool) (*http.Server, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", addr, portNum))
 	if err != nil {
 		return nil, err
@@ -59,7 +62,7 @@ func StartDASRPCServer(ctx context.Context, addr string, portNum uint64, rpcServ
 	return StartCelestiaDASRPCServerOnListener(ctx, listener, rpcServerTimeouts, rpcServerBodyLimit, celestiaReader, celestiaWriter, dasClient, fallbackEnabled)
 }
 
-func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Listener, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter, dasClient *Client, fallbackEnabled bool) (*http.Server, error) {
+func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Listener, rpcServerTimeouts genericconf.HTTPServerTimeoutConfig, rpcServerBodyLimit int, celestiaReader types.CelestiaReader, celestiaWriter types.CelestiaWriter, dasClient *daclient.Client, fallbackEnabled bool) (*http.Server, error) {
 	if celestiaWriter == nil {
 		return nil, errors.New("no writer backend was configured for Celestia DAS RPC server. Please setup a node and ensure a connections is being established")
 	}
@@ -184,41 +187,37 @@ func (serv *DaClientServer) RecoverPayloadFromBatch(
 	batchNum hexutil.Uint64,
 	batchBlockHash common.Hash,
 	sequencerMsg hexutil.Bytes,
-	preimages types.PreimagesMap,
+	preimages daprovider.PreimagesMap,
 	validateSeqMsg bool,
 ) (*types.RecoverPayloadFromBatchResult, error) {
-	payload, preimages, err := serv.reader.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
-	if err != nil {
-		// fallback to das
-		if serv.fallback {
-			log.Info("Reading payload from Anytrust DAS")
-			payload, preimages, err = serv.dasClient.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
-			if err != nil {
-				return nil, err
-			}
-		} else {
+	// check the header byte before sending out the call
+
+	headerByte := sequencerMsg[40]
+	if IsCelestiaMessageHeaderByte(headerByte) {
+		payload, preimages, err := serv.reader.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
+		if err != nil {
 			return nil, err
 		}
+		return &types.RecoverPayloadFromBatchResult{
+			Payload:   payload,
+			Preimages: preimages,
+		}, nil
+	} else if daprovider.IsDASMessageHeaderByte(headerByte) {
+		payload, preimages, err := serv.dasClient.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
+		if err != nil {
+			return nil, err
+		}
+		return &types.RecoverPayloadFromBatchResult{
+			Payload:   payload,
+			Preimages: preimages,
+		}, nil
 	}
-	return &types.RecoverPayloadFromBatchResult{
-		Payload:   payload,
-		Preimages: preimages,
-	}, nil
+
+	return nil, errors.New("unknown batch header byte")
 }
 
 func (serv *DaClientServer) IsValidHeaderByte(ctx context.Context, headerByte byte) (*types.IsValidHeaderByteResult, error) {
-	valid := serv.reader.IsValidHeaderByte(ctx, headerByte)
-	// fallback to das
-	if !valid && serv.fallback {
-		log.Info("Verifying valid header byte against Anytrust DAS")
-		var err error
-		valid, err = serv.dasClient.IsValidHeaderByte(ctx, headerByte)
-		if err != nil {
-			log.Info("Could not deserialize DasHeaderByte")
-			return nil, err
-		}
-	}
-	return &types.IsValidHeaderByteResult{IsValid: valid}, nil
+	return &types.IsValidHeaderByteResult{IsValid: serv.reader.IsValidHeaderByte(ctx, headerByte) || serv.dasClient.IsValidHeaderByte(ctx, headerByte)}, nil
 }
 
 func (serv *DaClientServer) Store(

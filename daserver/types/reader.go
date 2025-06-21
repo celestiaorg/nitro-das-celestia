@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/offchainlabs/nitro/arbutil"
+	"github.com/offchainlabs/nitro/daprovider"
 )
 
 type Reader interface {
@@ -22,20 +23,14 @@ type Reader interface {
 		batchNum uint64,
 		batchBlockHash common.Hash,
 		sequencerMsg []byte,
-		preimages PreimagesMap,
+		preimages daprovider.PreimagesMap,
 		validateSeqMsg bool,
-	) ([]byte, PreimagesMap, error)
+	) ([]byte, daprovider.PreimagesMap, error)
 }
-
-type PreimagesMap map[arbutil.PreimageType]map[common.Hash][]byte
-
-// PreimageRecorder is used to add (key,value) pair to the map accessed by key = ty of a bigger map, preimages.
-// If ty doesn't exist as a key in the preimages map, then it is intialized to map[common.Hash][]byte and then (key,value) pair is added
-type PreimageRecorder func(key common.Hash, value []byte, ty arbutil.PreimageType)
 
 // RecordPreimagesTo takes in preimages map and returns a function that can be used
 // In recording (hash,preimage) key value pairs into preimages map, when fetching payload through RecoverPayloadFromBatch
-func RecordPreimagesTo(preimages PreimagesMap) PreimageRecorder {
+func RecordPreimagesTo(preimages daprovider.PreimagesMap) daprovider.PreimageRecorder {
 	if preimages == nil {
 		return nil
 	}
@@ -49,8 +44,8 @@ func RecordPreimagesTo(preimages PreimagesMap) PreimageRecorder {
 
 // RecoverPayloadFromBatchResult is the result struct that data availability providers should use to respond with underlying payload and updated preimages map to a RecoverPayloadFromBatch fetch request
 type RecoverPayloadFromBatchResult struct {
-	Payload   hexutil.Bytes `json:"payload,omitempty"`
-	Preimages PreimagesMap  `json:"preimages,omitempty"`
+	Payload   hexutil.Bytes           `json:"payload,omitempty"`
+	Preimages daprovider.PreimagesMap `json:"preimages,omitempty"`
 }
 
 type IsValidHeaderByteResult struct {
@@ -90,9 +85,9 @@ func (c *readerForCelestia) RecoverPayloadFromBatch(
 	batchNum uint64,
 	batchBlockHash common.Hash,
 	sequencerMsg []byte,
-	preimages PreimagesMap,
+	preimages daprovider.PreimagesMap,
 	validateSeqMsg bool,
-) ([]byte, PreimagesMap, error) {
+) ([]byte, daprovider.PreimagesMap, error) {
 	return RecoverPayloadFromCelestiaBatch(ctx, batchNum, sequencerMsg, c.celestiaReader, preimages, validateSeqMsg)
 }
 
@@ -101,10 +96,10 @@ func RecoverPayloadFromCelestiaBatch(
 	batchNum uint64,
 	sequencerMsg []byte,
 	celestiaReader CelestiaReader,
-	preimages PreimagesMap,
+	preimages daprovider.PreimagesMap,
 	validateSeqMsg bool,
-) ([]byte, PreimagesMap, error) {
-	var preimageRecorder PreimageRecorder
+) ([]byte, daprovider.PreimagesMap, error) {
+	var preimageRecorder daprovider.PreimageRecorder
 	if preimages != nil {
 		preimageRecorder = RecordPreimagesTo(preimages)
 	}

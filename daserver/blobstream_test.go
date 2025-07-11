@@ -14,6 +14,7 @@ import (
 
 	libshare "github.com/celestiaorg/go-square/v2/share"
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -79,6 +80,8 @@ func setupNetworkTest(t *testing.T) (*CelestiaDA, string, func(), context.Contex
 		1024*1024*2, // 2MB body limit
 		celestiaDA,
 		celestiaDA,
+		nil,
+		false,
 	)
 	require.NoError(t, err)
 
@@ -117,7 +120,7 @@ func TestGetProofVerification(t *testing.T) {
 	commitment, err := base64.StdEncoding.DecodeString(os.Getenv("COMMITMENT"))
 	require.NoError(t, err)
 
-	header, err := celestiaDA.Client.Header.GetByHeight(ctx, height)
+	header, _ := celestiaDA.Client.Header.GetByHeight(ctx, height)
 
 	dataBlob, err := celestiaDA.Client.Blob.Get(ctx, height, namespace, commitment)
 	require.NoError(t, err)
@@ -148,17 +151,16 @@ func TestGetProofVerification(t *testing.T) {
 
 	startIndexOds := blobIndex - odsSize*startRow
 
-	blobPointer := BlobPointer{
+	blobPointer := types.BlobPointer{
 		BlockHeight:  height,
 		Start:        uint64(startIndexOds),
 		SharesLength: uint64(sharesLength),
-		TxCommitment: txCommitment,
 		DataRoot:     dataRoot,
 	}
 
 	t.Run("Read Message BlobPointer", func(t *testing.T) {
 		// Read through RPC
-		var readResult ReadResult
+		var readResult types.ReadResult
 		err = client.Call(&readResult, "celestia_read", &blobPointer)
 		require.NoError(t, err)
 		require.NotNil(t, readResult)
@@ -238,7 +240,7 @@ func TestGetProofVerification(t *testing.T) {
 		ethRpc, err := ethclient.Dial(celestiaDA.Cfg.ValidatorConfig.EthClient)
 		require.NoError(t, err)
 
-		packedData, err := verifyProofABI.Inputs.Pack(
+		packedData, _ := verifyProofABI.Inputs.Pack(
 			args.Blobstream,
 			celestiagen.NamespaceNode{
 				Min:    celestiagen.Namespace(args.RowRoot.Min),

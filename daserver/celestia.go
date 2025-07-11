@@ -17,6 +17,7 @@ import (
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v2/share"
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -25,7 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/spf13/pflag"
 
-	blobstreamx "github.com/succinctlabs/blobstreamx/bindings"
+	blobstreamx "github.com/succinctlabs/sp1-blobstream/bindings"
 )
 
 type DAConfig struct {
@@ -293,7 +294,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	}
 
 	startIndexOds := blobIndex - odsSize*startRow
-	blobPointer := BlobPointer{
+	blobPointer := types.BlobPointer{
 		BlockHeight:  height,
 		Start:        startIndexOds,
 		SharesLength: uint64(sharesLength),
@@ -334,7 +335,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	return serializedBlobPointerData, nil
 }
 
-func (c *CelestiaDA) Read(ctx context.Context, blobPointer *BlobPointer) (*ReadResult, error) {
+func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (*types.ReadResult, error) {
 	header, err := c.ReadClient.Header.GetByHeight(ctx, blobPointer.BlockHeight)
 	if err != nil {
 		log.Error("could not fetch header", "err", err)
@@ -423,7 +424,7 @@ BlobLoop:
 		rows = append(rows, extendedSquare.Row(uint(i)))
 	}
 
-	return &ReadResult{
+	return &types.ReadResult{
 		Message:     blobData,
 		RowRoots:    header.DAH.RowRoots,
 		ColumnRoots: header.DAH.ColumnRoots,
@@ -448,7 +449,7 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	blobstream, err := blobstreamx.NewBlobstreamX(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
+	blobstream, err := blobstreamx.NewBindings(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
 	if err != nil {
 		celestiaValidationFailureCounter.Inc(1)
 		log.Error("Couldn't instantiate client for blobstream", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "blobstreamAddr", common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), "err", err)
@@ -458,7 +459,7 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	fmt.Printf("Inbox Message: %v\n", msg)
 	buf := bytes.NewBuffer(msg)
 	// msgLength := uint32(len(msg) + 1)
-	blobPointer := BlobPointer{}
+	blobPointer := types.BlobPointer{}
 	blobBytes := buf.Bytes()
 	err = blobPointer.UnmarshalBinary(blobBytes)
 	if err != nil {
@@ -504,7 +505,7 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		backwards = false
 	}
 
-	var event *blobstreamx.BlobstreamXDataCommitmentStored
+	var event *blobstreamx.BindingsDataCommitmentStored
 
 	event, err = c.filter(ctx, ethRpc, blobstream, latestBlockNumber, blobPointer.BlockHeight, backwards)
 	if err != nil {
@@ -595,7 +596,7 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 }
 
 func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
-	blobstream *blobstreamx.BlobstreamX, latestBlock uint64, celestiaHeight uint64, backwards bool) (*blobstreamx.BlobstreamXDataCommitmentStored, error) {
+	blobstream *blobstreamx.Bindings, latestBlock uint64, celestiaHeight uint64, backwards bool) (*blobstreamx.BindingsDataCommitmentStored, error) {
 	// Geth has a default of 5000 block limit for filters
 	start := uint64(0)
 	if latestBlock > 5000 {
@@ -623,11 +624,11 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 			return nil, err
 		}
 
-		var event *blobstreamx.BlobstreamXDataCommitmentStored
+		var event *blobstreamx.BindingsDataCommitmentStored
 		for eventsIterator.Next() {
 			e := eventsIterator.Event
 			if e.StartBlock <= celestiaHeight && celestiaHeight < e.EndBlock {
-				event = &blobstreamx.BlobstreamXDataCommitmentStored{
+				event = &blobstreamx.BindingsDataCommitmentStored{
 					ProofNonce:     e.ProofNonce,
 					StartBlock:     e.StartBlock,
 					EndBlock:       e.EndBlock,
@@ -678,11 +679,11 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 	}
 }
 
-func (c *CelestiaDA) returnErrorHelper(err error) (*ReadResult, error) {
+func (c *CelestiaDA) returnErrorHelper(err error) (*types.ReadResult, error) {
 	log.Error(err.Error())
 
 	if c.Cfg.ReorgOnReadFailure {
-		return &ReadResult{Message: []byte{}}, nil
+		return &types.ReadResult{Message: []byte{}}, nil
 	}
 
 	return nil, err

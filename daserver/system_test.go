@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
@@ -65,6 +66,8 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 		1024*1024*2, // 2MB body limit
 		celestiaDA,
 		celestiaDA,
+		nil,
+		false,
 	)
 	require.NoError(t, err)
 
@@ -102,12 +105,12 @@ func TestCelestiaIntegration(t *testing.T) {
 		require.Equal(t, CelestiaMessageHeaderFlag, storedBytes[0])
 
 		// Parse blob pointer
-		var blobPointer BlobPointer
+		var blobPointer types.BlobPointer
 		err = blobPointer.UnmarshalBinary(storedBytes[1:])
 		require.NoError(t, err)
 
 		// Read through RPC
-		var readResult ReadResult
+		var readResult types.ReadResult
 		err = client.Call(&readResult, "celestia_read", &blobPointer)
 		require.NoError(t, err)
 		require.NotNil(t, readResult)
@@ -133,11 +136,11 @@ func TestCelestiaIntegration(t *testing.T) {
 			err = client.Call(&storedBytes, "celestia_store", hexutil.Bytes(msg))
 			require.NoError(t, err)
 
-			var blobPointer BlobPointer
+			var blobPointer types.BlobPointer
 			err = blobPointer.UnmarshalBinary(storedBytes[1:])
 			require.NoError(t, err)
 
-			var readResult ReadResult
+			var readResult types.ReadResult
 			err = client.Call(&readResult, "celestia_read", &blobPointer)
 			require.NoError(t, err)
 			require.Equal(t, msg, readResult.Message)
@@ -166,13 +169,13 @@ func TestCelestiaIntegration(t *testing.T) {
 
 	t.Run("Error Cases", func(t *testing.T) {
 		// Try to read non-existent block
-		invalidPointer := &BlobPointer{
+		invalidPointer := &types.BlobPointer{
 			BlockHeight:  999999999, // Very high block number
 			Start:        0,
 			SharesLength: 1,
 		}
 
-		var readResult ReadResult
+		var readResult types.ReadResult
 		err = client.Call(&readResult, "celestia_read", invalidPointer)
 		require.Error(t, err)
 

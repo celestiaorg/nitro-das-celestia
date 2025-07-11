@@ -1,0 +1,68 @@
+## Example on setting up a node for an Orbit x Celestia DA chain using a hosted DA endpoint
+services:
+  my-testnet:
+    # NOTE: if your rollup has modifications on top of nitro, use an image for it that supports celestia da
+    image: ghcr.io/celestiaorg/nitro:v3.5.5
+    container_name: my-testnet
+    depends_on:
+      - celestia-server-mocha
+    ports:
+      - "8547:8547"
+      - "6070:6070"
+    command:
+      - --parent-chain.connection.url=<parent-chain-eth-rpc-url>
+      - --chain.id=your_chain_id
+      - --chain.name=chain_name
+      - --http.addr=0.0.0.0
+      - --http.corsdomain=*
+      - --http.vhosts=*
+      - --ws.expose-all
+      - --ws.rpcprefix=/
+      - --ws.port=8547
+      - --ws.addr=0.0.0.0
+      - --ws.origins=*
+      - --http.api=net,web3,eth,txpool,debug,admin,arb,arbdebug,arbtrace
+      - --ws.api=net,web3,eth,txpool,debug
+      - --chain.info-json=<Orbit chain's info>
+      - --node.celestia-cfg.enable=true
+      - --node.celestia-cfg.url=http://celestia-server-mocha:26657
+      ### The following are only needed if the network supports fallbacks to Anytrust
+      - --node.data-availability.enable=true
+      - --node.data-availability.rest-aggregator.enable=true
+      - --node.data-availability.rest-aggregator.urls=<REST aggregator endpoint>
+      ###
+      - --execution.forwarding-target=<Sequencer node endpoint url>
+      - --execution.caching.archive # retains past block states, make the node run on archive
+      - --parent-chain.blob-client.beacon-url=<Parent chain beacon chain RPC URL>
+      - --node.staker.enable=false # set to false for full node
+      - --node.feed.input.url=<feed address>
+      - --node.sequencer=false # set to false for full node
+      - --execution.rpc.tx-fee-cap=100
+      - --execution.rpc.gas-cap=500000000
+      ### Metrics
+      - --metrics
+      - --metrics-server.addr=0.0.0.0
+      - --metrics-server.port=6070
+      - --metrics-server.update-interval=5s
+
+  celestia-server-mocha:
+    image: ghcr.io/celestiaorg/nitro-das-celestia:v0.4.3
+    container_name: celestia-server-mocha
+    entrypoint:
+      - /bin/celestia-server
+      - --celestia.namespace-id
+      - "YOUR_NAMESPACE"
+      - --rpc-addr
+      - "0.0.0.0" # Not recommended to expose on all ports,
+      - --rpc-port
+      - "26657"
+      - --celestia.rpc
+      - "CELESTIA_NODE_RPC_ENDPOINT"
+      - --log-level
+      - "INFO" # Default, can be set to DEBUG, etc.
+    ports:
+      - "1317:1317"
+      - "9090:9090"
+      - "26657:26657" # Celestia RPC port
+      - "1095:1095"
+      - "8080:8080"

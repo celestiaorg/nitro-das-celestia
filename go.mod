@@ -5,8 +5,9 @@ go 1.24.4
 toolchain go1.24.6
 
 require (
-	github.com/celestiaorg/celestia-node v0.25.2-arabica
+	github.com/celestiaorg/celestia-node v0.25.2-mocha
 	github.com/celestiaorg/go-square/v2 v2.3.1
+	github.com/cometbft/cometbft v0.38.17
 	github.com/ethereum/go-ethereum v1.15.8
 	github.com/joho/godotenv v1.5.1
 	github.com/offchainlabs/nitro v0.0.0-20250612224140-a1deae26fb24
@@ -60,7 +61,6 @@ require (
 	github.com/cloudwego/base64x v0.1.5 // indirect
 	github.com/cncf/xds/go v0.0.0-20250326154945-ae57f3c0d45f // indirect
 	github.com/cockroachdb/fifo v0.0.0-20240816210425-c5d0cb0b6fc0 // indirect
-	github.com/cometbft/cometbft v0.38.17 // indirect
 	github.com/cosmos/cosmos-db v1.1.1 // indirect
 	github.com/cosmos/gogogateway v1.2.0 // indirect
 	github.com/cosmos/ibc-apps/middleware/packet-forward-middleware/v8 v8.2.0 // indirect

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -116,8 +117,8 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.String(prefix+".core-token", "", "Auth token for Core Celestia Node Endpoint")
 	f.String(prefix+".core-url", "", "URL to Celestia Core endpoint")
 	f.String(prefix+".core-network", "celestia", "Celestia Network to use")
-	f.String(prefix+".key-name", "my_key", "key name to use")
-	f.String(prefix+".key-path", "./keys", "key path to use")
+	f.String(prefix+".key-name", "my_celes_key", "key name to use")
+	f.String(prefix+".key-path", "", "key path to use")
 	f.String(prefix+".backend-name", "test", "keyring backend to use")
 	f.Bool(prefix+".enable-da-tls", false, "enable TLS for DA node")
 	f.Bool(prefix+".enable-core-tls", false, "enable TLS for Core node")
@@ -129,18 +130,57 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Duration(prefix+".cache-time", time.Hour/2, "how often to clean the in memory cache")
 }
 
+// DefaultKeyringPath constructs the default keyring path using the given
+// node type and network.
+var DefaultKeyringPath = func(tp string, network string) (string, error) {
+	home := os.Getenv("CELESTIA_HOME")
+	if home != "" {
+		return home, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	if network == "mainnet" {
+		return fmt.Sprintf("%s/.celestia-%s/keys", home, strings.ToLower(tp)), nil
+	}
+	// only include network name in path for testnets and custom networks
+	return fmt.Sprintf(
+		"%s/.celestia-%s-%s/keys",
+		home,
+		strings.ToLower(tp),
+		strings.ToLower(network),
+	), nil
+}
+
 func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 	if cfg == nil {
 		return nil, errors.New("celestia cfg cannot be blank")
 	}
+
+	var err error
+	if cfg.KeyPath == "" {
+		cfg.KeyPath, err = DefaultKeyringPath("light", cfg.CoreNetwork)
+	}
+
+	log.Info("Key path", "path", cfg.KeyPath)
 	// Create a keyring
 	kr, err := txclient.KeyringWithNewKey(txclient.KeyringConfig{
 		KeyName:     cfg.KeyName,
 		BackendName: cfg.BackendName,
 	}, cfg.KeyPath)
 	if err != nil {
+		log.Error("failed to create keyring")
 		return nil, err
 	}
+
+	if cfg.CoreURL == "" {
+		cfg.CoreURL = cfg.Rpc
+	}
+
+	log.Info("Core URL: ", "url", cfg.CoreURL)
 
 	// Configure the client
 	clientCfg := txclient.Config{
@@ -162,6 +202,7 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 
 	celestiaClient, err := txclient.New(context.Background(), clientCfg, kr)
 	if err != nil {
+		log.Error("failed to initialize client", "err", err)
 		return nil, err
 	}
 

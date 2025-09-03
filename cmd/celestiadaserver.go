@@ -54,7 +54,7 @@ var DefaultCelestiaDAServerConfig = CelestiaDAServerConfig{
 	RPCPort:            9876,
 	RPCServerTimeouts:  genericconf.HTTPServerTimeoutConfigDefault,
 	RPCServerBodyLimit: genericconf.HTTPServerBodyLimitDefault,
-	FallbackEnabled:    true,
+	FallbackEnabled:    false,
 	LogLevel:           "INFO",
 	LogType:            "plaintext",
 	Metrics:            false,

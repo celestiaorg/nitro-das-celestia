@@ -4,7 +4,7 @@ import (
 	"math/big"
 
 	"github.com/celestiaorg/celestia-node/nodebuilder/blobstream"
-	"github.com/tendermint/tendermint/crypto/merkle"
+	"github.com/cometbft/cometbft/crypto/merkle"
 )
 
 type Namespace struct {

@@ -313,6 +313,11 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 		return nil, errors.New("NoopWriter enabled")
 	}
 
+	if !c.Cfg.WithWriter {
+		log.Warn("Attempted to call Store() without writer enabled", "cfg.withWriter", c.Cfg.WithWriter)
+		return nil, errors.New("writer not enabled")
+	}
+
 	// Create hash of message to use as cache key
 	msgHash := crypto.Keccak256(message)
 	msgHashHex := hex.EncodeToString(msgHash)

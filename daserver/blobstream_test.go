@@ -43,7 +43,6 @@ func setupNetworkTest(t *testing.T) (*CelestiaDA, string, func(), context.Contex
 
 	// Create CelestiaDA instance connected to local node
 	cfg := &DAConfig{
-		Enable:           true,
 		Rpc:              "http://localhost:26658", // Default Celestia light node RPC port
 		ReadRpc:          "http://localhost:26658",
 		NamespaceId:      namespaceID,

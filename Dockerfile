@@ -39,12 +39,15 @@ FROM ${RUNTIME_IMAGE} AS runtime
 # Use UID 10,001 because UIDs below 10,000 are a security risk.
 # Ref: https://github.com/hexops/dockerfile/blob/main/README.md#do-not-use-a-uid-below-10000
 ARG UID=10001
-ARG USER_NAME=apollo
-ENV APOLLO_HOME=/home/${USER_NAME}
+ARG USER_NAME=celestia
+ENV CELESTIA_HOME=/home/${USER_NAME}
 
 ENV AUTH_TOKEN=""
 ENV NAMESPACEID=""
 ENV CELESTIA_NODE_ENDPOINT=""
+
+# Switch to root to install packages and create user
+USER root
 
 # hadolint ignore=DL3018
 RUN apk update && apk add --no-cache \
@@ -54,11 +57,18 @@ RUN apk update && apk add --no-cache \
     && adduser ${USER_NAME} \
     -D \
     -g ${USER_NAME} \
-    -h ${APOLLO_HOME} \
+    -h ${CELESTIA_HOME} \
     -s /sbin/nologin \
     -u ${UID}
 
 COPY --from=builder /nitro-das-celestia/cmd/celestia-server /bin/celestia-server
+
+# Create a directory that the user can write to for keys when no volume is mounted
+RUN mkdir -p ${CELESTIA_HOME}/keys && \
+    chown -R ${USER_NAME}:${USER_NAME} ${CELESTIA_HOME}/keys
+
+# Set the working directory
+WORKDIR ${CELESTIA_HOME}
 
 #Set the user
 USER ${USER_NAME}

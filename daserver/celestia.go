@@ -133,6 +133,15 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 	if cfg == nil {
 		return nil, errors.New("celestia cfg cannot be blank")
 	}
+	log.Info("DEBUG: NewCelestiaDA called", "cfg.Rpc", cfg.Rpc, "cfg.ReadRpc", cfg.ReadRpc, "cfg.CoreURL", cfg.CoreURL)
+
+	if cfg.CoreURL == "" {
+		log.Warn("DEBUG: cfg.CoreURL is empty - this will likely cause 'invalid IP address' error")
+	}
+	if cfg.Rpc == "" {
+		log.Warn("DEBUG: cfg.Rpc is empty - this will likely cause 'invalid IP address' error")
+	}
+
 	// Create a keyring
 	kr, err := txclient.KeyringWithNewKey(txclient.KeyringConfig{
 		KeyName:     cfg.KeyName,
@@ -143,6 +152,7 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 	}
 
 	// Configure the client
+	log.Info("DEBUG: Configuring celestia client", "cfg.Rpc", cfg.Rpc, "cfg.CoreURL", cfg.CoreURL)
 	clientCfg := txclient.Config{
 		ReadConfig: txclient.ReadConfig{
 			BridgeDAAddr: cfg.Rpc,
@@ -160,13 +170,25 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 		},
 	}
 
+	log.Info("DEBUG: About to create celestia client", "BridgeDAAddr", clientCfg.ReadConfig.BridgeDAAddr, "CoreAddr", clientCfg.SubmitConfig.CoreGRPCConfig.Addr)
+
+	// Pre-validate configurations to identify which one might fail
+	if clientCfg.ReadConfig.BridgeDAAddr == "" {
+		log.Error("DEBUG: BridgeDAAddr is empty, this will cause SanitizeAddr to fail")
+	}
+	if clientCfg.SubmitConfig.CoreGRPCConfig.Addr == "" {
+		log.Error("DEBUG: CoreAddr is empty, this will cause SanitizeAddr to fail in CoreGRPCConfig.Validate()")
+	}
+
 	celestiaClient, err := txclient.New(context.Background(), clientCfg, kr)
 	if err != nil {
+		log.Error("DEBUG: Failed to create celestia client", "err", err, "BridgeDAAddr", clientCfg.ReadConfig.BridgeDAAddr, "CoreAddr", clientCfg.SubmitConfig.CoreGRPCConfig.Addr)
 		return nil, err
 	}
 
 	var readClient *txclient.Client
 	if cfg.ReadRpc != "" && cfg.ReadAuthToken != "" {
+		log.Info("DEBUG: Configuring read client", "cfg.ReadRpc", cfg.ReadRpc)
 		readClientCfg := txclient.Config{
 			ReadConfig: txclient.ReadConfig{
 				BridgeDAAddr: cfg.ReadRpc,
@@ -174,8 +196,10 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 				EnableDATLS:  cfg.EnableDATLS,
 			},
 		}
+		log.Info("DEBUG: About to create read client", "ReadBridgeDAAddr", readClientCfg.ReadConfig.BridgeDAAddr)
 		readClient, err = txclient.New(context.Background(), readClientCfg, kr)
 		if err != nil {
+			log.Error("DEBUG: Failed to create read client", "err", err, "ReadBridgeDAAddr", readClientCfg.ReadConfig.BridgeDAAddr)
 			return nil, err
 		}
 	} else {

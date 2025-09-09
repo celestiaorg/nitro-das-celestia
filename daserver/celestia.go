@@ -143,7 +143,7 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 	}
 
 	// Create a keyring
-	kr, err := txclient.KeyringWithNewKey(txclient.KeyringConfig{
+	_, err := txclient.KeyringWithNewKey(txclient.KeyringConfig{
 		KeyName:     cfg.KeyName,
 		BackendName: cfg.BackendName,
 	}, cfg.KeyPath)
@@ -180,44 +180,33 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 		log.Error("DEBUG: CoreAddr is empty, this will cause SanitizeAddr to fail in CoreGRPCConfig.Validate()")
 	}
 
-	// Create celestia client with panic recovery
-	var celestiaClient *txclient.Client
-	var clientErr error
-
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Error("DEBUG: Panic caught while creating celestia client", "panic", r, "BridgeDAAddr", clientCfg.ReadConfig.BridgeDAAddr, "CoreAddr", clientCfg.SubmitConfig.CoreGRPCConfig.Addr)
-				clientErr = fmt.Errorf("panic during celestia client creation: %v", r)
-			}
-		}()
-		celestiaClient, clientErr = txclient.New(context.Background(), clientCfg, kr)
-	}()
-
-	if clientErr != nil {
-		log.Error("DEBUG: Failed to create celestia client", "err", clientErr, "BridgeDAAddr", clientCfg.ReadConfig.BridgeDAAddr, "CoreAddr", clientCfg.SubmitConfig.CoreGRPCConfig.Addr)
-		return nil, clientErr
+	readClient, err := txclient.NewReadClient(context.Background(), clientCfg.ReadConfig)
+	if err != nil {
+		log.Error("DEBUG: Failed to create celestia client", "err", err, "BridgeDAAddr", clientCfg.ReadConfig.BridgeDAAddr, "CoreAddr", clientCfg.SubmitConfig.CoreGRPCConfig.Addr)
+		return nil, err
 	}
 
-	var readClient *txclient.Client
-	if cfg.ReadRpc != "" && cfg.ReadAuthToken != "" {
-		log.Info("DEBUG: Configuring read client", "cfg.ReadRpc", cfg.ReadRpc)
-		readClientCfg := txclient.Config{
-			ReadConfig: txclient.ReadConfig{
-				BridgeDAAddr: cfg.ReadRpc,
-				DAAuthToken:  cfg.ReadAuthToken,
-				EnableDATLS:  cfg.EnableDATLS,
-			},
-		}
-		log.Info("DEBUG: About to create read client", "ReadBridgeDAAddr", readClientCfg.ReadConfig.BridgeDAAddr)
-		readClient, err = txclient.New(context.Background(), readClientCfg, kr)
-		if err != nil {
-			log.Error("DEBUG: Failed to create read client", "err", err, "ReadBridgeDAAddr", readClientCfg.ReadConfig.BridgeDAAddr)
-			return nil, err
-		}
-	} else {
-		readClient = celestiaClient
+	celestiaClient := &txclient.Client{
+		ReadClient: *readClient,
 	}
+	// if cfg.ReadRpc != "" && cfg.ReadAuthToken != "" {
+	// 	log.Info("DEBUG: Configuring read client", "cfg.ReadRpc", cfg.ReadRpc)
+	// 	readClientCfg := txclient.Config{
+	// 		ReadConfig: txclient.ReadConfig{
+	// 			BridgeDAAddr: cfg.ReadRpc,
+	// 			DAAuthToken:  cfg.ReadAuthToken,
+	// 			EnableDATLS:  cfg.EnableDATLS,
+	// 		},
+	// 	}
+	// 	log.Info("DEBUG: About to create read client", "ReadBridgeDAAddr", readClientCfg.ReadConfig.BridgeDAAddr)
+	// 	readClient, err = txclient.New(context.Background(), readClientCfg, kr)
+	// 	if err != nil {
+	// 		log.Error("DEBUG: Failed to create read client", "err", err, "ReadBridgeDAAddr", readClientCfg.ReadConfig.BridgeDAAddr)
+	// 		return nil, err
+	// 	}
+	// } else {
+	// 	readClient = celestiaClient
+	// }
 
 	if cfg.NamespaceId == "" {
 		return nil, errors.New("namespace id cannot be blank")
@@ -235,7 +224,7 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 	da := &CelestiaDA{
 		Cfg:        cfg,
 		Client:     celestiaClient,
-		ReadClient: readClient,
+		ReadClient: celestiaClient,
 		Namespace:  &namespace,
 	}
 

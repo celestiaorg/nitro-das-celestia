@@ -28,17 +28,14 @@ jobs:
       - name: Set env
         run: |
           echo "REVISION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
-
       - name: Docker build and push
         run: |
           docker build --no-cache -t 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:${{ matrix.arch }}-${REVISION} -f Dockerfile .
           docker push 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:${{ matrix.arch }}-${REVISION}
-
       - name: Lark Notification
         continue-on-error: true
         run: |
           notiv3 "Blockchain nitro image pushed 🎉" 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:${{ matrix.arch }}-${REVISION}
-
   merge-docker-manifest:
     runs-on: [self-hosted, ops]
     needs: build-artifacts
@@ -51,7 +48,6 @@ jobs:
       - name: Set env
         run: |
           echo "REVISION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
-
       - name: Merge manifest
         run: |
           docker pull --platform=linux/amd64 294354037686.dkr.ecr.ap-northeast-1.amazonaws.com/nitro-das-celestia:amd64-${REVISION}

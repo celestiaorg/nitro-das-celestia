@@ -180,10 +180,23 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 		log.Error("DEBUG: CoreAddr is empty, this will cause SanitizeAddr to fail in CoreGRPCConfig.Validate()")
 	}
 
-	celestiaClient, err := txclient.New(context.Background(), clientCfg, kr)
-	if err != nil {
-		log.Error("DEBUG: Failed to create celestia client", "err", err, "BridgeDAAddr", clientCfg.ReadConfig.BridgeDAAddr, "CoreAddr", clientCfg.SubmitConfig.CoreGRPCConfig.Addr)
-		return nil, err
+	// Create celestia client with panic recovery
+	var celestiaClient *txclient.Client
+	var clientErr error
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("DEBUG: Panic caught while creating celestia client", "panic", r, "BridgeDAAddr", clientCfg.ReadConfig.BridgeDAAddr, "CoreAddr", clientCfg.SubmitConfig.CoreGRPCConfig.Addr)
+				clientErr = fmt.Errorf("panic during celestia client creation: %v", r)
+			}
+		}()
+		celestiaClient, clientErr = txclient.New(context.Background(), clientCfg, kr)
+	}()
+
+	if clientErr != nil {
+		log.Error("DEBUG: Failed to create celestia client", "err", clientErr, "BridgeDAAddr", clientCfg.ReadConfig.BridgeDAAddr, "CoreAddr", clientCfg.SubmitConfig.CoreGRPCConfig.Addr)
+		return nil, clientErr
 	}
 
 	var readClient *txclient.Client

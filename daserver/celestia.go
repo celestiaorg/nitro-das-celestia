@@ -247,30 +247,24 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 				return nil, err
 			}
 
-			readClient, err = txclient.NewReadClient(context.Background(), readConfig)
-			if err != nil {
-				log.Error("error initializing read client", "err", err)
-				return nil, err
-			}
-
-			log.Info("Succesfully initialized write and read experimental txclient", "writeRpc", cfg.CoreURL, "readRpc", readConfig.BridgeDAAddr)
+			log.Info("Succesfully initialized write (experimental) txclient", "writeRpc", cfg.CoreURL)
 		} else {
 			daClient, err = node.NewClient(context.Background(), cfg.Rpc, cfg.AuthToken)
 			if err != nil {
 				log.Error("could not initialize node client for da rpc", "err", err)
 				return nil, err
 			}
+			log.Info("Succesfully initialized node da client", "writeRpc", cfg.Rpc)
 		}
 
-	} else {
-		var err error
-		readClient, err = txclient.NewReadClient(context.Background(), readConfig)
-		if err != nil {
-			log.Error("could not initialize txclient.ReadClient", "err", err)
-			return nil, err
-		}
-		log.Info("Succesfully initialized read only client", "rpc", cfg.Rpc)
 	}
+
+	readClient, err = txclient.NewReadClient(context.Background(), readConfig)
+	if err != nil {
+		log.Error("could not initialize txclient.ReadClient", "err", err)
+		return nil, err
+	}
+	log.Info("Succesfully initialized read client", "readRpc", readConfig.BridgeDAAddr)
 
 	da := &CelestiaDA{
 		Cfg:        cfg,

@@ -59,36 +59,47 @@ jobs:
           docker system df || true
 
       # ---------- 1) Bring up Nitro devnet via OffchainLabs testnode ----------
-
-      - name: Clone OffchainLabs/nitro-testnode
-        run: |
-          git clone -b "${TESTNODE_REF}" --recurse-submodules \
-            "https://github.com/${TESTNODE_REPO}.git" "$WORKDIR/nitro-testnode"
-          cd "$WORKDIR/nitro-testnode"
-          git rev-parse --short HEAD
-
-      - name: Init & start OffchainLabs testnode
-        working-directory: ${{ env.WORKDIR }}/nitro-testnode
+      - name: Start Nitro + Celestia + DA concurrently
+        shell: bash
         run: |
           set -euo pipefail
-          ./test-node.bash --init
-          ./test-node.bash --start
-          docker compose ps
-
-      # ---------- 2) Start Celestia light node (RPC open, no auth) ----------
-
-      - name: Start Celestia light node (26658, --rpc.skip-auth)
-        run: |
-          set -euo pipefail
-          docker rm -f celestia-light 2>/dev/null || true
-          docker run -d --name celestia-light --restart unless-stopped \
-            -p 26658:26658 \
-            ghcr.io/celestiaorg/celestia-node:latest \
-            celestia light start --rpc.skip-auth --p2p.network "${CELESTIA_NET}"
-
-      # ---------- 3) Start DA server wired to the light node ----------
-
-      - name: Start nitro-das-celestia (9875)
+      
+          # Kick off Nitro testnode (init + start) in background
+          (
+            cd "$WORKDIR/nitro-testnode"
+            ./test-node.bash --init
+            ./test-node.bash --start
+            docker compose ps
+          ) &
+      
+          # Start Celestia light node (RPC open, no auth) in background
+          (
+            docker rm -f celestia-light 2>/dev/null || true
+            docker run -d --name celestia-light --restart unless-stopped \
+              -p 26658:26658 \
+              ghcr.io/celestiaorg/celestia-node:latest \
+              celestia light start --rpc.skip-auth --p2p.network "${CELESTIA_NET}"
+          ) &
+      
+          # Start DA server wired to the light node in background
+          (
+            docker rm -f celestia-da 2>/dev/null || true
+            # Ensure Linux can reach the host as host.docker.internal
+            HGI=$(docker info --format '{{.HostGateway}}' 2>/dev/null || echo "")
+            ADD_HOST_ARG=""
+            if [ -n "$HGI" ]; then
+              ADD_HOST_ARG="--add-host=host.docker.internal:${HGI}"
+            fi
+            docker run -d --name celestia-da --restart unless-stopped \
+              -p 9875:9875 \
+              $ADD_HOST_ARG \
+              "${DAS_IMAGE}" \
+              --enable-rpc --rpc-addr 0.0.0.0 --rpc-port 9875 \
+              --celestia.rpc http://host.docker.internal:26658
+          ) &
+      
+          # Wait for all background startups before running health checks
+          wait
         run: |
           set -euo pipefail
           docker rm -f celestia-da 2>/dev/null || true

@@ -45,7 +45,7 @@ services:
       - --metrics-server.port=6070
       - --metrics-server.update-interval=5s
   celestia:
-      image:  ghcr.io/celestiaorg/celestia-node:v0.21.9
+      image:  ghcr.io/celestiaorg/celestia-node:v0.25.1-arabica
       container_name: 'celestia'
       environment:
         - NODE_TYPE=light

@@ -1,0 +1,225 @@
+name: e2e-nitro-celestia
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: Self-hosted runner label
+        required: true
+        default: gh-solutions
+      mode:
+        description: "startup mode: 'celestia-start' (recommended) or 'offchainlabs-testnode'"
+        required: true
+        default: celestia-start
+      nitro_ref:
+        description: "Nitro ref/tag to use (celestia path uses celestiaorg/nitro tags; offchainlabs path can take a commit)"
+        required: false
+        default: v3.7.1
+      nitro_repo:
+        description: "Repo to pull nitro or testnode from"
+        required: false
+        default: celestiaorg/nitro
+      testnode_repo:
+        description: "Repo for OffchainLabs testnode when mode=offchainlabs-testnode"
+        required: false
+        default: OffchainLabs/nitro-testnode
+      testnode_ref:
+        description: "Ref for OffchainLabs testnode (release branch recommended)"
+        required: false
+        default: release
+      das_image:
+        description: "Celestia DA server image"
+        required: false
+        default: ghcr.io/celestiaorg/nitro-das-celestia:v0.5.3-mocha
+      rpc_skip_auth:
+        description: "Disable Celestia RPC auth"
+        required: true
+        default: "true"
+
+concurrency:
+  group: e2e-nitro-celestia-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 45
+    env:
+      COMPOSE_PROJECT_NAME: ndc-${{ github.run_id }}
+      WORKDIR: ${{ github.workspace }}/.e2e
+      RPC_SKIP_AUTH: ${{ inputs.rpc_skip_auth }}
+      DAS_IMAGE: ${{ inputs.das_image }}
+      MODE: ${{ inputs.mode }}
+      NITRO_REPO: ${{ inputs.nitro_repo }}
+      NITRO_REF: ${{ inputs.nitro_ref }}
+      TESTNODE_REPO: ${{ inputs.testnode_repo }}
+      TESTNODE_REF: ${{ inputs.testnode_ref }}
+
+    steps:
+      - name: Checkout nitro-das-celestia
+        uses: actions/checkout@v4
+
+      - name: Prep folders
+        run: |
+          mkdir -p "$WORKDIR"/{logs,artifacts}
+
+      - name: Docker info (pre)
+        run: |
+          docker info || true
+          docker system df || true
+
+      # ---------- Bringup (two modes) ----------
+
+      - name: Clone celestiaorg/nitro (for celestia-start.sh)
+        if: env.MODE == 'celestia-start'
+        run: |
+          git clone -b release --recurse-submodules https://github.com/${NITRO_REPO}.git "$WORKDIR/nitro"
+          cd "$WORKDIR/nitro"
+          git checkout "${NITRO_REF}"
+          test -d nitro-testnode || { echo "nitro-testnode submodule missing"; exit 1; }
+
+      - name: Start devnet via celestia-start.sh (Nitro + Celestia + DA server)
+        if: env.MODE == 'celestia-start'
+        working-directory: ${{ env.WORKDIR }}/nitro/nitro-testnode
+        run: |
+          set -euo pipefail
+          # Optionally disable RPC auth by patching celestia-node command
+          if [ "${RPC_SKIP_AUTH}" = "true" ]; then
+            # Inject --rpc.skip-auth into the celestia-node service command in docker-compose.yaml
+            sed -i.bak 's#celestia light start#celestia light start --rpc.skip-auth#g' docker-compose.yaml || true
+          fi
+          ./celestia-start.sh
+          docker compose ps
+
+      - name: Clone OffchainLabs/nitro-testnode (release)
+        if: env.MODE == 'offchainlabs-testnode'
+        run: |
+          git clone -b "${TESTNODE_REF}" --recurse-submodules https://github.com/${TESTNODE_REPO}.git "$WORKDIR/nitro-testnode"
+
+      - name: Init & start OffchainLabs testnode (Nitro only)
+        if: env.MODE == 'offchainlabs-testnode'
+        working-directory: ${{ env.WORKDIR }}/nitro-testnode
+        run: |
+          set -euo pipefail
+          ./test-node.bash --init
+          ./test-node.bash --start
+          docker compose ps
+
+      - name: Start Celestia light node (docker) with --rpc.skip-auth
+        if: env.MODE == 'offchainlabs-testnode'
+        run: |
+          set -euo pipefail
+          docker run -d --name celestia-light --restart unless-stopped \
+            -p 26658:26658 \
+            ghcr.io/celestiaorg/celestia-node:latest \
+            celestia light start --rpc.skip-auth --p2p.network mocha-4
+          # Start your DA server image wired to that light node
+          docker run -d --name celestia-da --restart unless-stopped \
+            -p 9875:9875 \
+            -e CELESTIA_NAMESPACE_ID="0x11223344556677889900" \
+            "${DAS_IMAGE}" \
+            --enable-rpc --rpc-addr 0.0.0.0 --rpc-port 9875 \
+            --celestia.rpc http://host.docker.internal:26658
+
+      # ---------- Health gates ----------
+
+      - name: Wait for Celestia RPC (26658)
+        run: |
+          set -e
+          tries=60
+          until curl -sf http://localhost:26658/health >/dev/null 2>&1 || curl -sf http://localhost:26658 | head -c 1 >/dev/null 2>&1; do
+            ((tries--)) || { echo "Celestia RPC not up"; exit 1; }
+            sleep 5
+          done
+
+      - name: Wait for DA server (9875)
+        run: |
+          set -e
+          tries=60
+          until curl -sf http://localhost:9875/health >/dev/null 2>&1 || curl -sf http://localhost:9875 | head -c 1 >/dev/null 2>&1; do
+            ((tries--)) || { echo "DA server not up"; exit 1; }
+            sleep 5
+          done
+
+      - name: Wait for L2 RPC (8547)
+        run: |
+          set -e
+          tries=90
+          until curl -sf -H 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+            http://localhost:8547 > /dev/null; do
+            ((tries--)) || { echo "L2 RPC not up"; exit 1; }
+            sleep 5
+          done
+
+      - name: Assert L2 progresses
+        run: |
+          set -e
+          getbn() { curl -s -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' http://localhost:8547 | jq -r .result; }
+          b1=$(getbn); sleep 8; b2=$(getbn)
+          echo "BlockNumber t0=$b1 t1=$b2"
+          [ "$b1" != "null" ] && [ "$b2" != "null" ] || { echo "null block number"; exit 1; }
+          # compare hex
+          [ $((b2)) -gt $((b1)) ] || { echo "L2 not progressing"; exit 1; }
+
+      # ---------- Heavier E2E assertions ----------
+
+      - name: Store & fetch a small payload through DA server
+        run: |
+          set -euo pipefail
+          PAYLOAD=$(printf 'hello-celestia-%s' "${GITHUB_RUN_ID}" | xxd -p -c 256)
+          # Try a generic store route; fall back to the server's POST if available
+          curl -sS -X POST "http://localhost:9875/store" \
+               -H "Content-Type: application/json" \
+               --data "{\"data\":\"0x${PAYLOAD}\"}" | tee "$WORKDIR/artifacts/store.json"
+          CMT=$(jq -r '.commitment // .data.commitment // empty' "$WORKDIR/artifacts/store.json")
+          test -n "$CMT" || { echo "No commitment returned from DA server"; exit 1; }
+          # Attempt a fetch/readback (paths vary by version; try common ones)
+          curl -sS "http://localhost:9875/get?commitment=${CMT}" | tee "$WORKDIR/artifacts/get.json" || true
+
+      - name: L2 tx smoke (send to self)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          set -euo pipefail
+          cat > send.json <<'EOF'
+          {"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xe2148eE53c0755215Df69b2616E552154EdC584f","to":"0xe2148eE53c0755215Df69b2616E552154EdC584f","value":"0x38d7ea4c68000"}],"id":7}
+          EOF
+          curl -sS -H 'Content-Type: application/json' --data @send.json http://localhost:8547 | tee artifacts/send-tx.json
+          sleep 4
+          curl -sS -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":9}' http://localhost:8547 | tee artifacts/bn-after.json
+
+      # ---------- Collect logs ----------
+
+      - name: Snapshot docker state & logs
+        if: always()
+        run: |
+          set -euo pipefail
+          docker compose ps | tee "$WORKDIR/logs/compose-ps.txt" || true
+          # Grab logs for all containers
+          for c in $(docker ps -a --format '{{.Names}}'); do
+            docker logs --tail=2000 "$c" > "$WORKDIR/logs/${c}.log" 2>&1 || true
+          done
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-${{ github.run_id }}
+          path: |
+            ${{ env.WORKDIR }}/logs
+            ${{ env.WORKDIR }}/artifacts
+
+      # ---------- Cleanup ----------
+
+      - name: Stop stacks
+        if: always()
+        run: |
+          set -e
+          docker compose down -v || true
+          docker rm -f celestia-da celestia-light 2>/dev/null || true
+
+      - name: Docker prune (post)
+        if: always()
+        run: |
+          docker system prune -af || true
+          docker volume prune -f || true

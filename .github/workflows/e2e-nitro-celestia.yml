@@ -81,9 +81,7 @@ jobs:
           # Kick off Nitro testnode (init + start) in background
           (
             cd "$WORKDIR/nitro-testnode"
-            ./test-node.bash --init
             ./test-node.bash --start
-            docker compose ps
           ) &
       
           # Start Celestia light node (RPC open, no auth) in background

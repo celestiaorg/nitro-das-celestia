@@ -6,7 +6,7 @@ on:
       runner_label:
         description: Self-hosted runner label
         required: true
-        default: gh-solutions
+        default: self-hosted
       testnode_repo:
         description: Repo for OffchainLabs testnode
         required: true

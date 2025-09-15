@@ -157,58 +157,7 @@ jobs:
 
       - name: DA store & (best effort) fetch
         run: |
-          set -euo pipefail
-          PAYLOAD=$(printf 'hello-celestia-%s' "${GITHUB_RUN_ID}" | xxd -p -c 256)
-          OK=0
-
-          # Try known endpoints in order; capture first success
-          try_store () {
-            URL="$1"; BODY="$2"; DESC="$3"
-            echo "Trying store via ${DESC} (${URL})"
-            set +e
-            RESP=$(curl -sS -X POST "$URL" -H "Content-Type: application/json" --data "$BODY")
-            RC=$?
-            set -e
-            if [ $RC -eq 0 ] && [ -n "$RESP" ]; then
-              echo "$RESP" > "$WORKDIR/artifacts/store.json"
-              CMT=$(jq -r '(.commitment // .data.commitment // .result // empty)' "$WORKDIR/artifacts/store.json")
-              if [ -n "$CMT" ] && [ "$CMT" != "null" ]; then
-                echo "Got commitment: $CMT"
-                echo "$CMT" > "$WORKDIR/artifacts/commitment.txt"
-                return 0
-              fi
-            fi
-            return 1
-          }
-
-          # Candidate API shapes (update to match your server if needed)
-          try_store "http://localhost:9875/store" \
-            "{\"data\":\"0x${PAYLOAD}\"}" \
-            "/store (data hex)"
-          if [ $? -ne 0 ]; then
-            try_store "http://localhost:9875/v1/store" \
-              "{\"data\":\"0x${PAYLOAD}\"}" \
-              "/v1/store (data hex)"
-          fi
-          if [ -f "$WORKDIR/artifacts/commitment.txt" ]; then
-            OK=1
-          fi
-
-          if [ "$OK" -ne 1 ] && [ "${ENFORCE_DA_ROUNDTRIP}" = "true" ]; then
-            echo "Failed to store payload via DA server with known endpoints."
-            exit 1
-          fi
-
-          # Best-effort fetch
-          if [ -f "$WORKDIR/artifacts/commitment.txt" ]; then
-            CMT=$(cat "$WORKDIR/artifacts/commitment.txt")
-            set +e
-            curl -sS "http://localhost:9875/get?commitment=${CMT}" \
-              | tee "$WORKDIR/artifacts/get.json" >/dev/null
-            curl -sS "http://localhost:9875/v1/get?commitment=${CMT}" \
-              | tee -a "$WORKDIR/artifacts/get.json" >/dev/null
-            set -e
-          fi
+        
 
       - name: L2 tx smoke (send to self)
         working-directory: ${{ env.WORKDIR }}

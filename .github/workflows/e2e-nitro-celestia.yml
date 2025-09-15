@@ -65,52 +65,47 @@ jobs:
           curl -sL https://raw.githubusercontent.com/OffchainLabs/blockscout/aa73f57d06a297b2202dbb1dbcfa354f5b45b781/nitro.env \
             -o blockscout/nitro.env
           echo "Created nitro.env file in blockscout directory"
-          ls -la blockscout/nitro.env
 
-      - name: Docker info (pre)
-        run: |
-          docker info || true
-          docker system df || true
 
-      # ---------- 1) Bring up Nitro devnet via OffchainLabs testnode ----------
-      - name: Start Nitro + Celestia + DA concurrently
-        shell: bash
+      # ---------- Start services sequentially ----------
+      
+      - name: Initialize Nitro testnode
         run: |
-          set -euo pipefail
-      
-          # Kick off Nitro testnode in background
-          (
-            cd "$WORKDIR/nitro-testnode" && ./test-node.bash --init 
-          ) &
-      
-          # Start Celestia light node (RPC open, no auth) in background
-          (
-            docker rm -f celestia-light 2>/dev/null || true
-            docker run -d --name celestia-light --restart unless-stopped \
-              -p 26658:26658 \
-              ghcr.io/celestiaorg/celestia-node:latest \
-              celestia light start --rpc.skip-auth --p2p.network "${CELESTIA_NET}"
-          ) &
-      
-          # Start DA server wired to the light node in background
-          (
-            docker rm -f celestia-da 2>/dev/null || true
-            # Ensure Linux can reach the host as host.docker.internal
-            HGI=$(docker info --format '{{.HostGateway}}' 2>/dev/null || echo "")
-            ADD_HOST_ARG=""
-            if [ -n "$HGI" ]; then
-              ADD_HOST_ARG="--add-host=host.docker.internal:${HGI}"
-            fi
-            docker run -d --name celestia-da --restart unless-stopped \
-              -p 9875:9875 \
-              $ADD_HOST_ARG \
-              "${DAS_IMAGE}" \
-              --enable-rpc --rpc-addr 0.0.0.0 --rpc-port 9875 \
-              --celestia.rpc http://host.docker.internal:26658
-          ) &
-      
-          # Wait for all background startups before running health checks
-          wait
+          cd "$WORKDIR/nitro-testnode"
+          ./test-node.bash --init
+          echo "Nitro testnode initialized"
+
+      - name: Start Celestia light node
+        run: |
+          docker rm -f celestia-light 2>/dev/null || true
+          docker run -d --name celestia-light --restart unless-stopped \
+            -p 26658:26658 \
+            ghcr.io/celestiaorg/celestia-node:latest \
+            celestia light start --rpc.skip-auth --p2p.network "${CELESTIA_NET}"
+          echo "Celestia light node started"
+
+      - name: Start DA server
+        run: |
+          docker rm -f celestia-da 2>/dev/null || true
+          # Ensure Linux can reach the host as host.docker.internal
+          HGI=$(docker info --format '{{.HostGateway}}' 2>/dev/null || echo "")
+          ADD_HOST_ARG=""
+          if [ -n "$HGI" ]; then
+            ADD_HOST_ARG="--add-host=host.docker.internal:${HGI}"
+          fi
+          docker run -d --name celestia-da --restart unless-stopped \
+            -p 9875:9875 \
+            $ADD_HOST_ARG \
+            "${DAS_IMAGE}" \
+            --enable-rpc --rpc-addr 0.0.0.0 --rpc-port 9875 \
+            --celestia.rpc http://host.docker.internal:26658
+          echo "DA server started"
+
+      - name: Start Nitro services
+        run: |
+          cd "$WORKDIR/nitro-testnode"
+          ./test-node.bash --start
+          echo "Nitro services started"
 
       # ---------- Health gates ----------
 
@@ -144,6 +139,14 @@ jobs:
             http://localhost:8547 2>&1) && echo "$response" | grep -q "result"; do
             ((tries--)) || { 
               echo "L2 RPC not up after 120 attempts (10 minutes)"
+              echo "Last response: $response"
+              echo "Checking if port 8547 is listening:"
+              netstat -tuln | grep :8547 || echo "Port 8547 not found"
+              echo "Docker container status:"
+              docker ps | grep -E "(nitro|sequencer|geth)" || echo "No nitro containers found"
+              echo "Checking testnode directory:"
+              ls -la "$WORKDIR/nitro-testnode/" 2>/dev/null || echo "Testnode directory not found"
+              exit 1
             }
             if [ $((tries % 10)) -eq 0 ] || [ $tries -lt 5 ]; then
               echo "Attempt $((120 - tries + 1))/120: $response"
@@ -155,13 +158,31 @@ jobs:
       - name: Run system tests
         run: |
           set -e
-          (cd "$WORKDIR/nitro-testnode" && ./test-node.bash script send-l2 --ethamount 2 --to user_l2user --wait;
-          then
-            echo "Sending l2 transaction succeeded"
-          else
-            echo "Sending l2 transaction failed"
-            exit 1
-          fi
+          echo "Running L2 transaction test..."
+          (cd "$WORKDIR/nitro-testnode" && ./test-node.bash script send-l2 --ethamount 2 --to user_l2user --wait)
+          echo "System tests completed successfully"
+
+      # ---------- Logs & cleanup ----------
+
+      - name: Snapshot docker state & logs
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$WORKDIR/logs"
+          # testnode compose context (if present)
+          (cd "$WORKDIR/nitro-testnode" && docker compose ps | tee "$WORKDIR/logs/compose-ps.txt") || true
+          for c in $(docker ps -a --format '{{.Names}}'); do
+            docker logs --tail=2000 "$c" > "$WORKDIR/logs/${c}.log" 2>&1 || true
+          done
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-${{ github.run_id }}
+          path: |
+            ${{ env.WORKDIR }}/logs
+            ${{ env.WORKDIR }}/artifacts
 
       - name: Stop stacks
         if: always()
@@ -169,9 +190,3 @@ jobs:
           set -e
           (cd "$WORKDIR/nitro-testnode" && docker compose down -v) || true
           docker rm -f celestia-da celestia-light 2>/dev/null || true
-
-      - name: Docker prune (post)
-        if: always()
-        run: |
-          docker system prune -af || true
-          docker volume prune -f || true

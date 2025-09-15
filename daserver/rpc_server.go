@@ -191,7 +191,6 @@ func (serv *DaClientServer) RecoverPayloadFromBatch(
 	validateSeqMsg bool,
 ) (*types.RecoverPayloadFromBatchResult, error) {
 	// check the header byte before sending out the call
-
 	headerByte := sequencerMsg[40]
 	if IsCelestiaMessageHeaderByte(headerByte) {
 		payload, preimages, err := serv.reader.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
@@ -203,6 +202,9 @@ func (serv *DaClientServer) RecoverPayloadFromBatch(
 			Preimages: preimages,
 		}, nil
 	} else if daprovider.IsDASMessageHeaderByte(headerByte) {
+		if serv.dasClient == nil {
+			return nil, fmt.Errorf("found DAS Message header Byte, but das client for fallback not enabled on server")
+		}
 		payload, preimages, err := serv.dasClient.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
 		if err != nil {
 			return nil, err
@@ -217,7 +219,14 @@ func (serv *DaClientServer) RecoverPayloadFromBatch(
 }
 
 func (serv *DaClientServer) IsValidHeaderByte(ctx context.Context, headerByte byte) (*types.IsValidHeaderByteResult, error) {
-	return &types.IsValidHeaderByteResult{IsValid: serv.reader.IsValidHeaderByte(ctx, headerByte) || serv.dasClient.IsValidHeaderByte(ctx, headerByte)}, nil
+	valid := false
+	if serv.reader != nil {
+		valid = serv.reader.IsValidHeaderByte(ctx, headerByte)
+	} else if serv.fallback && serv.dasClient != nil {
+		serv.dasClient.IsValidHeaderByte(ctx, headerByte)
+		valid = true
+	}
+	return &types.IsValidHeaderByteResult{IsValid: valid}, nil
 }
 
 func (serv *DaClientServer) Store(
@@ -229,7 +238,7 @@ func (serv *DaClientServer) Store(
 	result, err := serv.writer.Store(ctx, message, uint64(timeout), disableFallbackStoreDataOnChain)
 	if err != nil {
 		// fallback to das
-		if serv.fallback {
+		if serv.fallback && serv.dasClient != nil {
 			log.Info("Falling back to write data to Anytrust DAS")
 			result, err = serv.dasClient.Store(ctx, message, uint64(timeout), disableFallbackStoreDataOnChain)
 			if err != nil {

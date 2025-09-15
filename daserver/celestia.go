@@ -256,7 +256,6 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 			}
 			log.Info("Succesfully initialized node da client", "writeRpc", cfg.Rpc)
 		}
-
 	}
 
 	readClient, err = txclient.NewReadClient(context.Background(), readConfig)

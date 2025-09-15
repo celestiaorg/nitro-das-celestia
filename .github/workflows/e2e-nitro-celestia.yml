@@ -80,8 +80,7 @@ jobs:
       
           # Kick off Nitro testnode in background
           (
-            cd "$WORKDIR/nitro-testnode"
-            ./test-node.bash
+            cd "$WORKDIR/nitro-testnode" && ./test-node.bash --init 
           ) &
       
           # Start Celestia light node (RPC open, no auth) in background

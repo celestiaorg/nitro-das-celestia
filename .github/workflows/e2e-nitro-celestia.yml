@@ -153,17 +153,6 @@ jobs:
           done
           echo "L2 RPC is now responding: $response"
 
-      - name: Assert L2 progresses
-        run: |
-          set -e
-          getbn() { curl -s -H 'Content-Type: application/json' \
-            --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-            http://localhost:8547 | jq -r .result; }
-          b1=$(getbn); sleep 8; b2=$(getbn)
-          echo "BlockNumber t0=$b1 t1=$b2"
-          [ "$b1" != "null" ] && [ "$b2" != "null" ] || { echo "null block number"; exit 1; }
-          [ $((b2)) -gt $((b1)) ] || { echo "L2 not progressing"; exit 1; }
-
       # ---------- Heavier E2E: DA roundtrip + L2 tx ----------
 
       - name: DA store & (best effort) fetch

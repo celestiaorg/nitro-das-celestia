@@ -153,43 +153,16 @@ jobs:
           done
           echo "L2 RPC is now responding: $response"
 
-      # ---------- Heavier E2E: DA roundtrip + L2 tx ----------
-
-      - name: DA store & (best effort) fetch
+      - name: Run system tests
         run: |
-        
-
-      - name: L2 tx smoke (send to self)
-        working-directory: ${{ env.WORKDIR }}
-        run: |
-          set -euo pipefail
-          cat > send.json <<'EOF'
-          {"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xe2148eE53c0755215Df69b2616E552154EdC584f","to":"0xe2148eE53c0755215Df69b2616E552154EdC584f","value":"0x38d7ea4c68000"}],"id":7}
-          EOF
-          curl -sS -H 'Content-Type: application/json' --data @send.json http://localhost:8547 | tee artifacts/send-tx.json
-          sleep 4
-          curl -sS -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":9}' http://localhost:8547 | tee artifacts/bn-after.json
-
-      # ---------- Logs & cleanup ----------
-
-      - name: Snapshot docker state & logs
-        if: always()
-        run: |
-          set -euo pipefail
-          # testnode compose context (if present)
-          (cd "$WORKDIR/nitro-testnode" && docker compose ps | tee "$WORKDIR/logs/compose-ps.txt") || true
-          for c in $(docker ps -a --format '{{.Names}}'); do
-            docker logs --tail=2000 "$c" > "$WORKDIR/logs/${c}.log" 2>&1 || true
-          done
-
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-artifacts-${{ github.run_id }}
-          path: |
-            ${{ env.WORKDIR }}/logs
-            ${{ env.WORKDIR }}/artifacts
+          set -e
+          (cd "$WORKDIR/nitro-testnode" && ./test-node.bash script send-l2 --ethamount 2 --to user_l2user --wait;
+          then
+            echo "Sending l2 transaction succeeded"
+          else
+            echo "Sending l2 transaction failed"
+            exit 1
+          fi
 
       - name: Stop stacks
         if: always()

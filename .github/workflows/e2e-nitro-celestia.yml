@@ -53,6 +53,20 @@ jobs:
         run: |
           mkdir -p "$WORKDIR"/{logs,artifacts}
 
+      - name: Clone nitro-testnode
+        run: |
+          cd "$WORKDIR"
+          git clone -b "$TESTNODE_REF" --recurse-submodules "https://github.com/$TESTNODE_REPO.git" nitro-testnode
+
+      - name: Setup blockscout nitro.env
+        run: |
+          cd "$WORKDIR/nitro-testnode"
+          # Download nitro.env file from blockscout repository
+          curl -sL https://raw.githubusercontent.com/OffchainLabs/blockscout/aa73f57d06a297b2202dbb1dbcfa354f5b45b781/nitro.env \
+            -o blockscout/nitro.env
+          echo "Created nitro.env file in blockscout directory"
+          ls -la blockscout/nitro.env
+
       - name: Docker info (pre)
         run: |
           docker info || true

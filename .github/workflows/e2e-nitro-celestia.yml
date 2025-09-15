@@ -73,7 +73,7 @@ jobs:
         run: |
           cd "$WORKDIR/nitro-testnode"
           # Use non-interactive mode for CI
-          echo "y" | ./test-node.bash --init
+          echo "y" | ./test-node.bash --init &
 
       - name: Start Celestia light node
         run: |
@@ -81,8 +81,7 @@ jobs:
           docker run -d --name celestia-light --restart unless-stopped \
             -p 26658:26658 \
             ghcr.io/celestiaorg/celestia-node:latest \
-            celestia light start --rpc.skip-auth --p2p.network "${CELESTIA_NET}"
-          echo "Celestia light node started"
+            celestia light start --rpc.skip-auth --p2p.network "${CELESTIA_NET}" &
 
       - name: Start DA server
         run: |
@@ -98,13 +97,12 @@ jobs:
             $ADD_HOST_ARG \
             "${DAS_IMAGE}" \
             --enable-rpc --rpc-addr 0.0.0.0 --rpc-port 9875 \
-            --celestia.rpc http://host.docker.internal:26658
-          echo "DA server started"
+            --celestia.rpc http://host.docker.internal:26658 &
 
       - name: Start Nitro services
         run: |
           cd "$WORKDIR/nitro-testnode"
-          ./test-node.bash --start
+          ./test-node.bash --start &
           echo "Nitro services started"
 
       # ---------- Health gates ----------

@@ -128,9 +128,9 @@ jobs:
           set -e
           tries=120
           echo "Waiting for L2 RPC to become available..."
-          until response=$(curl -sf -H 'Content-Type: application/json' \
+          until response=$(curl --connect-timeout 5 --max-time 10 -H 'Content-Type: application/json' \
             --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-            http://localhost:8547 2>&1); do
+            http://localhost:8547 2>&1) && echo "$response" | grep -q "result"; do
             ((tries--)) || { 
               echo "L2 RPC not up after 120 attempts (10 minutes)"
               echo "Last response: $response"
@@ -138,12 +138,16 @@ jobs:
               netstat -tuln | grep :8547 || echo "Port 8547 not found"
               echo "Docker container status:"
               docker ps | grep -E "(nitro|sequencer|geth)" || echo "No nitro containers found"
+              echo "Checking testnode directory:"
+              ls -la "$WORKDIR/nitro-testnode/" 2>/dev/null || echo "Testnode directory not found"
               exit 1
             }
-            echo "Attempt $((120 - tries + 1))/120: $response"
+            if [ $((tries % 10)) -eq 0 ] || [ $tries -lt 5 ]; then
+              echo "Attempt $((120 - tries + 1))/120: $response"
+            fi
             sleep 5
           done
-          echo "L2 RPC is now responding"
+          echo "L2 RPC is now responding: $response"
 
       - name: Assert L2 progresses
         run: |

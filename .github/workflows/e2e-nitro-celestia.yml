@@ -78,10 +78,10 @@ jobs:
         run: |
           set -euo pipefail
       
-          # Kick off Nitro testnode (init + start) in background
+          # Kick off Nitro testnode in background
           (
             cd "$WORKDIR/nitro-testnode"
-            ./test-node.bash --start
+            ./test-node.bash
           ) &
       
           # Start Celestia light node (RPC open, no auth) in background
@@ -145,14 +145,6 @@ jobs:
             http://localhost:8547 2>&1) && echo "$response" | grep -q "result"; do
             ((tries--)) || { 
               echo "L2 RPC not up after 120 attempts (10 minutes)"
-              echo "Last response: $response"
-              echo "Checking if port 8547 is listening:"
-              netstat -tuln | grep :8547 || echo "Port 8547 not found"
-              echo "Docker container status:"
-              docker ps | grep -E "(nitro|sequencer|geth)" || echo "No nitro containers found"
-              echo "Checking testnode directory:"
-              ls -la "$WORKDIR/nitro-testnode/" 2>/dev/null || echo "Testnode directory not found"
-              exit 1
             }
             if [ $((tries % 10)) -eq 0 ] || [ $tries -lt 5 ]; then
               echo "Attempt $((120 - tries + 1))/120: $response"

@@ -72,8 +72,8 @@ jobs:
       - name: Initialize Nitro testnode
         run: |
           cd "$WORKDIR/nitro-testnode"
-          ./test-node.bash --init
-          echo "Nitro testnode initialized"
+          # Use non-interactive mode for CI
+          echo "y" | ./test-node.bash --init
 
       - name: Start Celestia light node
         run: |

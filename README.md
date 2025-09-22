@@ -8,7 +8,7 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
 
 ## Docker
 
-`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.4.3`
+`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.5.4`
 
 
 ## Example usage
@@ -37,6 +37,55 @@ docker run --name celestia-server \
 ## Example Docker Compose
 
 For an example on how to use the images in conjunction with other containers, check the [docker-compose.yaml](https://github.com/celestiaorg/nitro-das-celestia/blob/main/docker-compose.yaml) in this repository for an example
+
+## Fallback setup
+
+If the orbit chain uses celestia da, but has fallbacks enabled using an anytrust setup, a `daprovider` connection is needed. The `daprovider` binary can be ran as a wrapper around an existing rest aggregator endpoint, for example:
+
+```
+daprovider:
+    image: ghcr.io/celestiaorg/nitro:v3.6.8
+    entrypoint: /usr/local/bin/daprovider
+    ports:
+      - "127.0.0.1:9880:9880"
+    command:
+      - --das-server.addr=0.0.0.0
+      - --das-server.port=9880
+      - --das-server.data-availability.enable=true
+      - --das-server.data-availability.rest-aggregator.enable=true
+      - --das-server.data-availability.rest-aggregator.urls=<rest_aggregator_url>
+      - --das-server.data-availability.parent-chain-node-url=<ethereum_rpc>
+      - --das-server.data-availability.sequencer-inbox-address=<squencer_inbox_address>
+```
+
+This then can be used in your celestia server as:
+```
+celestia-server:
+    image: ghcr.io/celestiaorg/nitro-das-celestia:v0.5.4
+    container_name: celestia-server
+    entrypoint:
+      - /bin/celestia-server
+      - --das.enable
+      - --fallback-enabled
+      - --celestia.namespace-id
+      - $NAMESPACE
+      - --rpc-addr
+      - "0.0.0.0"
+      - --rpc-port
+      - "26657"
+      - --das.rpc.url
+      - $DAPROVIDER_URL
+      - --celestia.rpc
+      - $CELESTIA_RPC_ENDPOINT
+      - --log-level
+      - "DEBUG"
+    ports:
+      - "1317:1317"
+      - "9090:9090"
+      - "26657:26657" # Celestia RPC Port
+      - "1095:1095"
+      - "8080:8080"
+```
 
 ## Flags
 

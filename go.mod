@@ -5,7 +5,7 @@ go 1.24.4
 toolchain go1.24.6
 
 require (
-	github.com/celestiaorg/celestia-node v0.25.3
+	github.com/celestiaorg/celestia-node v0.27.4-mocha
 	github.com/celestiaorg/go-square/v2 v2.3.1
 	github.com/cometbft/cometbft v0.38.17
 	github.com/ethereum/go-ethereum v1.15.8

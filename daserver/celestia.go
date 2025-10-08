@@ -474,7 +474,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (*types.ReadResult, error) {
 	header, err := c.ReadClient.Header.GetByHeight(ctx, blobPointer.BlockHeight)
 	if err != nil {
-		log.Error("could not fetch header", "err", err)
+		log.Error("could not fetch header", "height", blobPointer.BlockHeight, "err", err)
 		return nil, err
 	}
 

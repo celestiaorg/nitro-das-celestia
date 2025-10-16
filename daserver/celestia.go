@@ -68,10 +68,10 @@ type RetryBackoffConfig struct {
 }
 
 func CelestiaRetryConfigAddOptions(prefix string, f *pflag.FlagSet) {
-	f.Int(prefix+".max-retries", 5, "maximum number of retry attempts")
-	f.Duration(prefix+".initial-backoff", 5*time.Second, "initial backoff duration for retries")
-	f.Duration(prefix+".max-backoff", 60*time.Second, "maximum backoff duration for retries")
-	f.Float64(prefix+".backoff-factor", 2.0, "exponential backoff multiplier")
+	f.Int(prefix+".max-retries", DefaultCelestiaRetryConfig.MaxRetries, "maximum number of retry attempts")
+	f.Duration(prefix+".initial-backoff", DefaultCelestiaRetryConfig.InitialBackoff, "initial backoff duration for retries")
+	f.Duration(prefix+".max-backoff", DefaultCelestiaRetryConfig.MaxBackoff, "maximum backoff duration for retries")
+	f.Float64(prefix+".backoff-factor", DefaultCelestiaRetryConfig.BackoffFactor, "exponential backoff multiplier")
 }
 
 var DefaultCelestiaRetryConfig = RetryBackoffConfig{
@@ -157,7 +157,7 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Int(prefix+".validator-config"+".sleep-time", 3600, "How many seconds to wait before initiating another filtering loop for Blobstream events")
 	f.Bool(prefix+".dangerous-reorg-on-read-failure", false, "DANGEROUS: reorg if any error during reads from celestia node")
 	f.Duration(prefix+".cache-time", time.Hour/2, "how often to clean the in memory cache")
-	CelestiaRetryConfigAddOptions(".retry-config", f)
+	CelestiaRetryConfigAddOptions(prefix+".retry-config", f)
 }
 
 var DefaultKeyringPath = func(tp string, network string) (string, error) {

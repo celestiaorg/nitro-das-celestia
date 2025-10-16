@@ -406,9 +406,9 @@ replace (
 	github.com/cometbft/cometbft => github.com/celestiaorg/celestia-core v0.39.4
 	// Only keep the essential replace directives that don't cause conflicts
 	github.com/cosmos/cosmos-sdk => github.com/celestiaorg/cosmos-sdk v0.51.2
+	github.com/cosmos/ibc-go/v8 => github.com/celestiaorg/ibc-go/v8 v8.7.2
 	github.com/ethereum/go-ethereum => github.com/Ferret-san/go-ethereum v1.13.4-0.20250619005312-0488d1d7bc61
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
-	github.com/cosmos/ibc-go/v8 => github.com/celestiaorg/ibc-go/v8 v8.7.2
 
 	// Local bridgegen replacement
 	github.com/offchainlabs/nitro/solgen/go/bridgegen => ./daserver/bridgegen

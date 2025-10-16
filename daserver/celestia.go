@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -16,11 +17,13 @@ import (
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
+	"github.com/celestiaorg/celestia-node/header"
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
+	"github.com/celestiaorg/rsmt2d"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -33,27 +36,49 @@ import (
 )
 
 type DAConfig struct {
-	WithWriter           bool            `koanf:"with-writer"`
-	GasPrice             float64         `koanf:"gas-price" reload:"hot"`
-	GasMultiplier        float64         `koanf:"gas-multiplier" reload:"hot"`
-	Rpc                  string          `koanf:"rpc" reload:"hot"`
-	ReadRpc              string          `koanf:"read-rpc" reload:"hot"`
-	NamespaceId          string          `koanf:"namespace-id" `
-	AuthToken            string          `koanf:"auth-token" reload:"hot"`
-	ReadAuthToken        string          `koanf:"read-auth-token" reload:"hot"`
-	CoreToken            string          `koanf:"core-token" reload:"hot"`
-	CoreURL              string          `koanf:"core-url" reload:"hot"`
-	CoreNetwork          string          `koanf:"core-network" reload:"hot"`
-	KeyName              string          `koanf:"key-name" reload:"hot"`
-	KeyPath              string          `koanf:"key-path" reload:"hot"`
-	BackendName          string          `koanf:"backend-name" reload:"hot"`
-	NoopWriter           bool            `koanf:"noop-writer" reload:"hot"`
-	EnableDATLS          bool            `koanf:"enable-da-tls" reload:"hot"`
-	EnableCoreTLS        bool            `koanf:"enable-core-tls" reload:"hot"`
-	ValidatorConfig      ValidatorConfig `koanf:"validator-config" reload:"hot"`
-	ReorgOnReadFailure   bool            `koanf:"dangerous-reorg-on-read-failure"`
-	CacheCleanupTime     time.Duration   `koanf:"cache-time"`
-	ExperimentalTxClient bool            `koanf:"experimental-tx-client"`
+	WithWriter           bool               `koanf:"with-writer"`
+	GasPrice             float64            `koanf:"gas-price" reload:"hot"`
+	GasMultiplier        float64            `koanf:"gas-multiplier" reload:"hot"`
+	Rpc                  string             `koanf:"rpc" reload:"hot"`
+	ReadRpc              string             `koanf:"read-rpc" reload:"hot"`
+	NamespaceId          string             `koanf:"namespace-id" `
+	AuthToken            string             `koanf:"auth-token" reload:"hot"`
+	ReadAuthToken        string             `koanf:"read-auth-token" reload:"hot"`
+	CoreToken            string             `koanf:"core-token" reload:"hot"`
+	CoreURL              string             `koanf:"core-url" reload:"hot"`
+	CoreNetwork          string             `koanf:"core-network" reload:"hot"`
+	KeyName              string             `koanf:"key-name" reload:"hot"`
+	KeyPath              string             `koanf:"key-path" reload:"hot"`
+	BackendName          string             `koanf:"backend-name" reload:"hot"`
+	NoopWriter           bool               `koanf:"noop-writer" reload:"hot"`
+	EnableDATLS          bool               `koanf:"enable-da-tls" reload:"hot"`
+	EnableCoreTLS        bool               `koanf:"enable-core-tls" reload:"hot"`
+	ValidatorConfig      ValidatorConfig    `koanf:"validator-config" reload:"hot"`
+	ReorgOnReadFailure   bool               `koanf:"dangerous-reorg-on-read-failure"`
+	CacheCleanupTime     time.Duration      `koanf:"cache-time"`
+	ExperimentalTxClient bool               `koanf:"experimental-tx-client"`
+	RetryConfig          RetryBackoffConfig `koanf:"retry-config"`
+}
+
+type RetryBackoffConfig struct {
+	MaxRetries     int           `koanf:"max-retries"`
+	InitialBackoff time.Duration `koanf:"initial-backoff"`
+	MaxBackoff     time.Duration `koanf:"max-backoff"`
+	BackoffFactor  float64       `koanf:"backoff-factor"`
+}
+
+func CelestiaRetryConfigAddOptions(prefix string, f *pflag.FlagSet) {
+	f.Int(prefix+".max-retries", 5, "maximum number of retry attempts")
+	f.Duration(prefix+".initial-backoff", 5*time.Second, "initial backoff duration for retries")
+	f.Duration(prefix+".max-backoff", 60*time.Second, "maximum backoff duration for retries")
+	f.Float64(prefix+".backoff-factor", 2.0, "exponential backoff multiplier")
+}
+
+var DefaultCelestiaRetryConfig = RetryBackoffConfig{
+	MaxRetries:     5,
+	InitialBackoff: 10 * time.Second,
+	MaxBackoff:     120 * time.Second,
+	BackoffFactor:  2.0,
 }
 
 type ValidatorConfig struct {
@@ -132,10 +157,9 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Int(prefix+".validator-config"+".sleep-time", 3600, "How many seconds to wait before initiating another filtering loop for Blobstream events")
 	f.Bool(prefix+".dangerous-reorg-on-read-failure", false, "DANGEROUS: reorg if any error during reads from celestia node")
 	f.Duration(prefix+".cache-time", time.Hour/2, "how often to clean the in memory cache")
+	CelestiaRetryConfigAddOptions(".retry-config", f)
 }
 
-// DefaultKeyringPath constructs the default keyring path using the given
-// node type and network.
 var DefaultKeyringPath = func(tp string, network string) (string, error) {
 	home := os.Getenv("CELESTIA_HOME")
 	if home != "" {
@@ -472,56 +496,123 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 }
 
 func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (*types.ReadResult, error) {
-	header, err := c.ReadClient.Header.GetByHeight(ctx, blobPointer.BlockHeight)
-	if err != nil {
-		log.Error("could not fetch header", "height", blobPointer.BlockHeight, "err", err)
-		return nil, err
+
+	log.Info("reading blob pointer",
+		"blockHeight", blobPointer.BlockHeight,
+		"start", blobPointer.Start,
+		"sharesLength", blobPointer.SharesLength,
+		"dataRoot", hex.EncodeToString(blobPointer.DataRoot[:]),
+		"txCommitment", hex.EncodeToString(blobPointer.TxCommitment[:]),
+	)
+
+	// Add timeout to the context
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	// Helper function for retrying with exponential backoff
+	retryWithBackoff := func(operation func() error) error {
+		backoff := c.Cfg.RetryConfig.InitialBackoff
+		for attempt := 0; attempt < c.Cfg.RetryConfig.MaxRetries; attempt++ {
+			err := operation()
+			if err == nil {
+				return nil
+			}
+
+			// Check if context is cancelled
+			if ctx.Err() != nil {
+				return fmt.Errorf("context cancelled: %w", ctx.Err())
+			}
+
+			// Last attempt, don't wait
+			if attempt == c.Cfg.RetryConfig.MaxRetries-1 {
+				return fmt.Errorf("max retries exceeded: %w", err)
+			}
+
+			log.Warn("operation failed, retrying...", "attempt", attempt+1, "backoff", backoff, "err", err)
+
+			// Wait with backoff
+			select {
+			case <-time.After(backoff):
+				// Exponential backoff with jitter
+				backoff = time.Duration(float64(backoff) * c.Cfg.RetryConfig.BackoffFactor)
+				if backoff > c.Cfg.RetryConfig.MaxBackoff {
+					backoff = c.Cfg.RetryConfig.MaxBackoff
+				}
+				// Add jitter (±20%)
+				jitter := time.Duration(rand.Float64()*0.4*float64(backoff)) - time.Duration(0.2*float64(backoff))
+				backoff += jitter
+			case <-ctx.Done():
+				return fmt.Errorf("context cancelled during backoff: %w", ctx.Err())
+			}
+		}
+		return fmt.Errorf("unexpected retry loop exit")
 	}
 
+	// Fetch header with retry
+	var header *header.ExtendedHeader
+	err := retryWithBackoff(func() error {
+		var err error
+		header, err = c.ReadClient.Header.GetByHeight(ctx, blobPointer.BlockHeight)
+		if err != nil {
+			log.Warn("could not fetch header", "height", blobPointer.BlockHeight, "err", err)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch header after retries: %w", err)
+	}
+
+	// Validate data root
 	headerDataHash := [32]byte{}
 	copy(headerDataHash[:], header.DataHash)
 	if headerDataHash != blobPointer.DataRoot {
 		return c.returnErrorHelper(fmt.Errorf("data Root mismatch, header.DataHash=%v, blobPointer.DataRoot=%v", header.DataHash, hex.EncodeToString(blobPointer.DataRoot[:])))
 	}
 
+	// Fetch blob with retry
 	var blobData []byte
 	var sharesLength int
-BlobLoop:
-	for {
-		select {
-		case <-ctx.Done():
-			return c.returnErrorHelper(fmt.Errorf("context cancelled or deadline exceeded"))
-		default:
-			blob, err := c.ReadClient.Blob.Get(ctx, blobPointer.BlockHeight, *c.Namespace, blobPointer.TxCommitment[:])
-			if err != nil {
-				log.Warn("failed to read blob, retrying...", "err", err)
-				continue
-			}
-			blob.Index()
-			blob.Length()
-			blobData = blob.Data()
-			length, err := blob.Length()
-			if err != nil || length == 0 {
-				celestiaFailureCounter.Inc(1)
-				log.Warn("could not get shares length for blob", "err", err)
-				if err == nil {
-					err = fmt.Errorf("blob found, but has shares length zero")
-				}
-				return nil, err
-			}
-			sharesLength = length
-			break BlobLoop
+	err = retryWithBackoff(func() error {
+		blob, err := c.ReadClient.Blob.Get(ctx, blobPointer.BlockHeight, *c.Namespace, blobPointer.TxCommitment[:])
+		if err != nil {
+			return err
 		}
-	}
 
-	extendedSquare, err := c.ReadClient.Share.GetEDS(ctx, blobPointer.BlockHeight)
+		blob.Index()
+		blobData = blob.Data()
+		length, err := blob.Length()
+		if err != nil {
+			return fmt.Errorf("could not get shares length: %w", err)
+		}
+		if length == 0 {
+			return fmt.Errorf("blob found, but has shares length zero")
+		}
+		sharesLength = length
+		return nil
+	})
 	if err != nil {
-		return c.returnErrorHelper(fmt.Errorf("failed to get EDS, height=%v, err=%v", blobPointer.BlockHeight, err))
+		celestiaFailureCounter.Inc(1)
+		return nil, fmt.Errorf("failed to read blob after retries: %w", err)
 	}
 
+	// Fetch EDS with retry
+	var extendedSquare *rsmt2d.ExtendedDataSquare
+	err = retryWithBackoff(func() error {
+		var err error
+		extendedSquare, err = c.ReadClient.Share.GetEDS(ctx, blobPointer.BlockHeight)
+		if err != nil {
+			return fmt.Errorf("failed to get EDS, height=%v: %w", blobPointer.BlockHeight, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return c.returnErrorHelper(err)
+	}
+
+	// Validation logic (no changes needed here)
 	squareSize := uint64(len(header.DAH.RowRoots))
 	odsSize := squareSize / 2
-
 	startRow := blobPointer.Start / odsSize
 
 	if blobPointer.Start >= odsSize*odsSize {
@@ -569,7 +660,6 @@ BlobLoop:
 		StartRow:    startRow,
 		EndRow:      endRow,
 	}, nil
-
 }
 
 func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {

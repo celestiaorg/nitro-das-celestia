@@ -12,6 +12,7 @@ import (
 
 	flag "github.com/spf13/pflag"
 
+	"github.com/ethereum/go-ethereum/log"
 	gethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/metrics/exp"
@@ -192,6 +193,7 @@ func startup() error {
 		celestiaWriter = celestiaDA
 
 		if serverConfig.FallbackEnabled {
+			log.Info("Creating client with DAS Fallback", "fallbackEnabled", serverConfig.FallbackEnabled)
 			clientConfig := serverConfig.DasClientConfig.RPC
 			client, err := daclient.NewClient(ctx, func() *rpcclient.ClientConfig { return &clientConfig })
 			if err != nil {
@@ -203,6 +205,7 @@ func startup() error {
 				panic(fmt.Sprintf("Failed to create client: %v", err))
 			}
 		} else {
+			log.Info("Creating client without DAS Fallback", "fallbackEnabled", serverConfig.FallbackEnabled)
 			rpcServer, err = das.StartDASRPCServer(ctx, serverConfig.RPCAddr, serverConfig.RPCPort, serverConfig.RPCServerTimeouts, serverConfig.RPCServerBodyLimit, celestiaReader, celestiaWriter, nil, false)
 			if err != nil {
 				return err

@@ -54,7 +54,6 @@ type DAConfig struct {
 	EnableDATLS          bool               `koanf:"enable-da-tls" reload:"hot"`
 	EnableCoreTLS        bool               `koanf:"enable-core-tls" reload:"hot"`
 	ValidatorConfig      ValidatorConfig    `koanf:"validator-config" reload:"hot"`
-	ReorgOnReadFailure   bool               `koanf:"dangerous-reorg-on-read-failure"`
 	CacheCleanupTime     time.Duration      `koanf:"cache-time"`
 	ExperimentalTxClient bool               `koanf:"experimental-tx-client"`
 	RetryConfig          RetryBackoffConfig `koanf:"retry-config"`
@@ -567,7 +566,7 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (
 	headerDataHash := [32]byte{}
 	copy(headerDataHash[:], header.DataHash)
 	if headerDataHash != blobPointer.DataRoot {
-		return c.returnErrorHelper(fmt.Errorf("data Root mismatch, header.DataHash=%v, blobPointer.DataRoot=%v", header.DataHash, hex.EncodeToString(blobPointer.DataRoot[:])))
+		return nil, fmt.Errorf("data Root mismatch, header.DataHash=%v, blobPointer.DataRoot=%v", header.DataHash, hex.EncodeToString(blobPointer.DataRoot[:]))
 	}
 
 	// Fetch blob with retry
@@ -607,7 +606,7 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (
 		return nil
 	})
 	if err != nil {
-		return c.returnErrorHelper(err)
+		return nil, err
 	}
 
 	// Validation logic (no changes needed here)
@@ -616,34 +615,34 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (
 	startRow := blobPointer.Start / odsSize
 
 	if blobPointer.Start >= odsSize*odsSize {
-		return c.returnErrorHelper(fmt.Errorf("startIndexOds >= odsSize*odsSize, startIndexOds=%v, odsSize*odsSize=%v", blobPointer.Start, odsSize*odsSize))
+		return nil, fmt.Errorf("startIndexOds >= odsSize*odsSize, startIndexOds=%v, odsSize*odsSize=%v", blobPointer.Start, odsSize*odsSize)
 	}
 
 	if blobPointer.Start+blobPointer.SharesLength < 1 {
-		return c.returnErrorHelper(fmt.Errorf("startIndexOds+blobPointer.SharesLength < 1, startIndexOds+blobPointer.SharesLength=%v", blobPointer.Start+blobPointer.SharesLength))
+		return nil, fmt.Errorf("startIndexOds+blobPointer.SharesLength < 1, startIndexOds+blobPointer.SharesLength=%v", blobPointer.Start+blobPointer.SharesLength)
 	}
 
 	endIndexOds := blobPointer.Start + blobPointer.SharesLength - 1
 	if endIndexOds >= odsSize*odsSize {
-		return c.returnErrorHelper(fmt.Errorf("endIndexOds >= odsSize*odsSize, endIndexOds=%v, odsSize*odsSize=%v", endIndexOds, odsSize*odsSize))
+		return nil, fmt.Errorf("endIndexOds >= odsSize*odsSize, endIndexOds=%v, odsSize*odsSize=%v", endIndexOds, odsSize*odsSize)
 	}
 
 	endRow := endIndexOds / odsSize
 
 	if endRow >= odsSize || startRow >= odsSize {
-		return c.returnErrorHelper(fmt.Errorf("endRow >= odsSize || startRow >= odsSize, endRow=%v, startRow=%v, odsSize=%v", endRow, startRow, odsSize))
+		return nil, fmt.Errorf("endRow >= odsSize || startRow >= odsSize, endRow=%v, startRow=%v, odsSize=%v", endRow, startRow, odsSize)
 	}
 
 	startColumn := blobPointer.Start % odsSize
 	endColumn := endIndexOds % odsSize
 
 	if startRow == endRow && startColumn > endColumn {
-		return c.returnErrorHelper(fmt.Errorf("start and end row are the same and startColumn >= endColumn, startColumn=%v, endColumn+1=%v", startColumn, endColumn+1))
+		return nil, fmt.Errorf("start and end row are the same and startColumn >= endColumn, startColumn=%v, endColumn+1=%v", startColumn, endColumn+1)
 	}
 
 	if uint64(sharesLength) != blobPointer.SharesLength || sharesLength == 0 {
 		celestiaFailureCounter.Inc(1)
-		return c.returnErrorHelper(fmt.Errorf("share length mismatch, sharesLength=%v, blobPointer.SharesLength=%v", sharesLength, blobPointer.SharesLength))
+		return nil, fmt.Errorf("share length mismatch, sharesLength=%v, blobPointer.SharesLength=%v", sharesLength, blobPointer.SharesLength)
 	}
 
 	rows := [][][]byte{}
@@ -903,14 +902,4 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 			end = latestBlockNumber
 		}
 	}
-}
-
-func (c *CelestiaDA) returnErrorHelper(err error) (*types.ReadResult, error) {
-	log.Error(err.Error())
-
-	if c.Cfg.ReorgOnReadFailure {
-		return &types.ReadResult{Message: []byte{}}, nil
-	}
-
-	return nil, err
 }

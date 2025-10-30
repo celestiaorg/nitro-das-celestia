@@ -131,7 +131,7 @@ func RecoverPayloadFromCelestiaBatch(
 
 	// we read a batch that is to be discarded, so we return the empty batch
 	if len(result.Message) == 0 {
-		return nil, nil, errors.New("tried to deserialize a message that doesn't have the Celestia header")
+		return nil, nil, errors.New("received an empty batch from Celestia reader")
 	}
 
 	if preimageRecorder != nil {

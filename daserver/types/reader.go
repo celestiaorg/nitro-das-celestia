@@ -120,7 +120,7 @@ func RecoverPayloadFromCelestiaBatch(
 	err = blobPointer.UnmarshalBinary(blobBytes)
 	if err != nil {
 		log.Error("Couldn't unmarshal Celestia blob pointer", "err", err)
-		return nil, nil, nil
+		return nil, nil, err
 	}
 
 	result, err := celestiaReader.Read(ctx, &blobPointer)
@@ -131,7 +131,7 @@ func RecoverPayloadFromCelestiaBatch(
 
 	// we read a batch that is to be discarded, so we return the empty batch
 	if len(result.Message) == 0 {
-		return result.Message, nil, nil
+		return nil, nil, errors.New("received an empty batch from Celestia reader")
 	}
 
 	if preimageRecorder != nil {
@@ -165,7 +165,7 @@ func RecoverPayloadFromCelestiaBatch(
 		dataRootMatches := bytes.Equal(dataRoot, blobPointer.DataRoot[:])
 		if !dataRootMatches {
 			log.Error("Data Root do not match", "blobPointer data root", blobPointer.DataRoot, "calculated", dataRoot)
-			return nil, nil, nil
+			return nil, nil, errors.New("data roots do not match")
 		}
 	}
 

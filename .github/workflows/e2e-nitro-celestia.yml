@@ -1,6 +1,13 @@
 name: e2e-nitro-celestia
 
 on:
+  on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       runner_label:

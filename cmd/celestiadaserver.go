@@ -20,8 +20,8 @@ import (
 	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/cmd/util/confighelpers"
 	"github.com/offchainlabs/nitro/daprovider/daclient"
+	"github.com/offchainlabs/nitro/daprovider/data_streaming"
 	"github.com/offchainlabs/nitro/util/headerreader"
-	"github.com/offchainlabs/nitro/util/rpcclient"
 
 	das "github.com/celestiaorg/nitro-das-celestia/daserver"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
@@ -194,8 +194,8 @@ func startup() error {
 
 		if serverConfig.FallbackEnabled {
 			log.Info("Creating client with DAS Fallback", "fallbackEnabled", serverConfig.FallbackEnabled)
-			clientConfig := serverConfig.DasClientConfig.RPC
-			client, err := daclient.NewClient(ctx, func() *rpcclient.ClientConfig { return &clientConfig })
+			clientConfig := serverConfig.DasClientConfig
+			client, err := daclient.NewClient(ctx, &clientConfig, data_streaming.PayloadCommiter())
 			if err != nil {
 				panic(fmt.Sprintf("Failed to create client: %v", err))
 			}

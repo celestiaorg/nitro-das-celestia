@@ -2,6 +2,7 @@ package das
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -137,7 +138,13 @@ func (serv *CelestiaDASRPCServer) Store(ctx context.Context, message hexutil.Byt
 }
 
 func (serv *CelestiaDASRPCServer) Read(ctx context.Context, blobPointer *types.BlobPointer) (*types.ReadResult, error) {
-	log.Trace("celestiaDasRpc.CelestiaDASRPCServer.Read", "blob pointer", blobPointer, "this", serv)
+	log.Info("CelestiaDASRPCServer.Read",
+		"blockHeight", blobPointer.BlockHeight,
+		"start", blobPointer.Start,
+		"sharesLength", blobPointer.SharesLength,
+		"dataRoot", hex.EncodeToString(blobPointer.DataRoot[:]),
+		"txCommitment", hex.EncodeToString(blobPointer.TxCommitment[:]),
+	)
 	rpcReadRequestGauge.Inc(1)
 	start := time.Now()
 	success := false
@@ -190,25 +197,46 @@ func (serv *DaClientServer) RecoverPayloadFromBatch(
 	preimages daprovider.PreimagesMap,
 	validateSeqMsg bool,
 ) (*types.RecoverPayloadFromBatchResult, error) {
+	log.Info("CelestiaDASRPCServer.RecoverPayloadFromBatch",
+		"batchNum", batchNum,
+		"batchBlockHash", batchBlockHash,
+		"sequencerMsg", sequencerMsg,
+	)
 	// check the header byte before sending out the call
 	headerByte := sequencerMsg[40]
 	if IsCelestiaMessageHeaderByte(headerByte) {
+		log.Info("CelestiaDASRPCServer.RecoverPayloadFromBatch", "celestiaHeaderByte", headerByte)
 		payload, preimages, err := serv.reader.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
 		if err != nil {
+			log.Error("failed to recover payload from Celestia batch",
+				"batchNum", batchNum,
+				"batchBlockHash", batchBlockHash,
+				"sequencerMsg", sequencerMsg,
+				"validateSeqMsg", validateSeqMsg,
+				"err", err)
 			return nil, err
 		}
+		log.Info("Recovered Payload from Celestia batch", "len(payload)", len(payload), "len(preimages)", len(preimages))
 		return &types.RecoverPayloadFromBatchResult{
 			Payload:   payload,
 			Preimages: preimages,
 		}, nil
 	} else if daprovider.IsDASMessageHeaderByte(headerByte) {
+		log.Info("CelestiaDASRPCServer.RecoverPayloadFromBatch", "dasHeaderByte", headerByte)
 		if serv.dasClient == nil {
 			return nil, fmt.Errorf("found DAS Message header Byte, but das client for fallback not enabled on server")
 		}
 		payload, preimages, err := serv.dasClient.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
 		if err != nil {
+			log.Error("failed to recover payload from DAS batch",
+				"batchNum", batchNum,
+				"batchBlockHash", batchBlockHash,
+				"sequencerMsg", sequencerMsg,
+				"validateSeqMsg", validateSeqMsg,
+				"err", err)
 			return nil, err
 		}
+		log.Info("Recovered Payload from DAS batch", "len(payload)", len(payload), "len(preimages)", len(preimages))
 		return &types.RecoverPayloadFromBatchResult{
 			Payload:   payload,
 			Preimages: preimages,
@@ -219,13 +247,18 @@ func (serv *DaClientServer) RecoverPayloadFromBatch(
 }
 
 func (serv *DaClientServer) IsValidHeaderByte(ctx context.Context, headerByte byte) (*types.IsValidHeaderByteResult, error) {
+	log.Info("Checking valid header byte", "headerByte", headerByte)
 	valid := false
 	if serv.reader != nil {
 		valid = serv.reader.IsValidHeaderByte(ctx, headerByte)
-	} else if serv.fallback && serv.dasClient != nil {
-		serv.dasClient.IsValidHeaderByte(ctx, headerByte)
-		valid = true
+		log.Info("Got response from CelestiaServer", "headerByteValid", valid)
 	}
+
+	if serv.fallback && serv.dasClient != nil && !valid {
+		valid = serv.dasClient.IsValidHeaderByte(ctx, headerByte)
+		log.Info("Got response from DasServer", "headerByteValid", valid)
+	}
+	log.Info("Header byte validity", "valid", valid)
 	return &types.IsValidHeaderByteResult{IsValid: valid}, nil
 }
 

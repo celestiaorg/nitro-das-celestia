@@ -36,27 +36,28 @@ import (
 )
 
 type DAConfig struct {
-	WithWriter           bool               `koanf:"with-writer"`
-	GasPrice             float64            `koanf:"gas-price" reload:"hot"`
-	GasMultiplier        float64            `koanf:"gas-multiplier" reload:"hot"`
-	Rpc                  string             `koanf:"rpc" reload:"hot"`
-	ReadRpc              string             `koanf:"read-rpc" reload:"hot"`
-	NamespaceId          string             `koanf:"namespace-id" `
-	AuthToken            string             `koanf:"auth-token" reload:"hot"`
-	ReadAuthToken        string             `koanf:"read-auth-token" reload:"hot"`
-	CoreToken            string             `koanf:"core-token" reload:"hot"`
-	CoreURL              string             `koanf:"core-url" reload:"hot"`
-	CoreNetwork          string             `koanf:"core-network" reload:"hot"`
-	KeyName              string             `koanf:"key-name" reload:"hot"`
-	KeyPath              string             `koanf:"key-path" reload:"hot"`
-	BackendName          string             `koanf:"backend-name" reload:"hot"`
-	NoopWriter           bool               `koanf:"noop-writer" reload:"hot"`
-	EnableDATLS          bool               `koanf:"enable-da-tls" reload:"hot"`
-	EnableCoreTLS        bool               `koanf:"enable-core-tls" reload:"hot"`
-	ValidatorConfig      ValidatorConfig    `koanf:"validator-config" reload:"hot"`
-	CacheCleanupTime     time.Duration      `koanf:"cache-time"`
-	ExperimentalTxClient bool               `koanf:"experimental-tx-client"`
-	RetryConfig          RetryBackoffConfig `koanf:"retry-config"`
+	WithWriter                  bool               `koanf:"with-writer"`
+	GasPrice                    float64            `koanf:"gas-price" reload:"hot"`
+	GasMultiplier               float64            `koanf:"gas-multiplier" reload:"hot"`
+	Rpc                         string             `koanf:"rpc" reload:"hot"`
+	ReadRpc                     string             `koanf:"read-rpc" reload:"hot"`
+	NamespaceId                 string             `koanf:"namespace-id" `
+	AuthToken                   string             `koanf:"auth-token" reload:"hot"`
+	ReadAuthToken               string             `koanf:"read-auth-token" reload:"hot"`
+	CoreToken                   string             `koanf:"core-token" reload:"hot"`
+	CoreURL                     string             `koanf:"core-url" reload:"hot"`
+	CoreNetwork                 string             `koanf:"core-network" reload:"hot"`
+	KeyName                     string             `koanf:"key-name" reload:"hot"`
+	KeyPath                     string             `koanf:"key-path" reload:"hot"`
+	BackendName                 string             `koanf:"backend-name" reload:"hot"`
+	NoopWriter                  bool               `koanf:"noop-writer" reload:"hot"`
+	EnableDATLS                 bool               `koanf:"enable-da-tls" reload:"hot"`
+	EnableCoreTLS               bool               `koanf:"enable-core-tls" reload:"hot"`
+	ValidatorConfig             ValidatorConfig    `koanf:"validator-config" reload:"hot"`
+	CacheCleanupTime            time.Duration      `koanf:"cache-time"`
+	ExperimentalTxClient        bool               `koanf:"experimental-tx-client"`
+	DangerousReorgOnReadFailure bool               `koanf:"dangerous-reorg-on-read-failure"`
+	RetryConfig                 RetryBackoffConfig `koanf:"retry-config"`
 }
 
 type RetryBackoffConfig struct {

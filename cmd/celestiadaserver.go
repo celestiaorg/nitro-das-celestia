@@ -12,15 +12,12 @@ import (
 
 	flag "github.com/spf13/pflag"
 
-	"github.com/ethereum/go-ethereum/log"
 	gethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/metrics/exp"
 
 	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/cmd/util/confighelpers"
-	"github.com/offchainlabs/nitro/daprovider/daclient"
-	"github.com/offchainlabs/nitro/daprovider/data_streaming"
 	"github.com/offchainlabs/nitro/util/headerreader"
 
 	das "github.com/celestiaorg/nitro-das-celestia/daserver"
@@ -35,10 +32,6 @@ type CelestiaDAServerConfig struct {
 	RPCServerBodyLimit int                                 `koanf:"rpc-server-body-limit"`
 
 	CelestiaDa das.DAConfig `koanf:"celestia"`
-
-	DasClientConfig daclient.ClientConfig `koanf:"das"`
-
-	FallbackEnabled bool `koanf:"fallback-enabled"`
 
 	LogLevel string `koanf:"log-level"`
 	LogType  string `koanf:"log-type"`
@@ -55,14 +48,12 @@ var DefaultCelestiaDAServerConfig = CelestiaDAServerConfig{
 	RPCPort:            9876,
 	RPCServerTimeouts:  genericconf.HTTPServerTimeoutConfigDefault,
 	RPCServerBodyLimit: genericconf.HTTPServerBodyLimitDefault,
-	FallbackEnabled:    false,
 	LogLevel:           "INFO",
 	LogType:            "plaintext",
 	Metrics:            false,
 	MetricsServer:      genericconf.MetricsServerConfigDefault,
 	PProf:              false,
 	PprofCfg:           genericconf.PProfDefault,
-	DasClientConfig:    daclient.DefaultClientConfig,
 }
 
 func main() {
@@ -93,11 +84,7 @@ func parseDAServer(args []string) (*CelestiaDAServerConfig, error) {
 	f.String("log-level", DefaultCelestiaDAServerConfig.LogLevel, "log level, valid values are CRIT, ERROR, WARN, INFO, DEBUG, TRACE")
 	f.String("log-type", DefaultCelestiaDAServerConfig.LogType, "log type (plaintext or json)")
 
-	f.Bool("fallback-enabled", DefaultCelestiaDAServerConfig.FallbackEnabled, "enable fallbacks to arbitrum anytrust")
-
 	das.CelestiaDAConfigAddOptions("celestia", f)
-
-	daclient.ClientConfigAddOptions("das", f)
 
 	k, err := confighelpers.BeginCommonParse(f, args)
 	if err != nil {
@@ -192,25 +179,11 @@ func startup() error {
 		celestiaReader = celestiaDA
 		celestiaWriter = celestiaDA
 
-		if serverConfig.FallbackEnabled {
-			log.Info("Creating client with DAS Fallback", "fallbackEnabled", serverConfig.FallbackEnabled)
-			clientConfig := serverConfig.DasClientConfig
-			client, err := daclient.NewClient(ctx, &clientConfig, data_streaming.PayloadCommiter())
-			if err != nil {
-				panic(fmt.Sprintf("Failed to create client: %v", err))
-			}
-			defer client.Close()
-			rpcServer, err = das.StartDASRPCServer(ctx, serverConfig.RPCAddr, serverConfig.RPCPort, serverConfig.RPCServerTimeouts, serverConfig.RPCServerBodyLimit, celestiaReader, celestiaWriter, client, true)
-			if err != nil {
-				panic(fmt.Sprintf("Failed to create client: %v", err))
-			}
-		} else {
-			log.Info("Creating client without DAS Fallback", "fallbackEnabled", serverConfig.FallbackEnabled)
-			rpcServer, err = das.StartDASRPCServer(ctx, serverConfig.RPCAddr, serverConfig.RPCPort, serverConfig.RPCServerTimeouts, serverConfig.RPCServerBodyLimit, celestiaReader, celestiaWriter, nil, false)
-			if err != nil {
-				return err
-			}
+		rpcServer, err = das.StartDASRPCServer(ctx, serverConfig.RPCAddr, serverConfig.RPCPort, serverConfig.RPCServerTimeouts, serverConfig.RPCServerBodyLimit, celestiaReader, celestiaWriter)
+		if err != nil {
+			return err
 		}
+
 	}
 
 	<-sigint

@@ -106,16 +106,10 @@ func (c *readerForCelestia) CollectPreimages(
 	batchBlockHash common.Hash,
 	sequencerMsg []byte,
 ) containers.PromiseInterface[daprovider.PreimagesResult] {
-	promise, ctx := containers.NewPromiseWithContext[daprovider.PreimagesResult](context.Background())
-	go func() {
+	return containers.DoPromise(context.Background(), func(ctx context.Context) (daprovider.PreimagesResult, error) {
 		_, preimages, err := RecoverPayloadFromCelestiaBatch(ctx, batchNum, sequencerMsg, c.celestiaReader, true)
-		if err != nil {
-			promise.ProduceError(err)
-		} else {
-			promise.Produce(daprovider.PreimagesResult{Preimages: preimages})
-		}
-	}()
-	return promise
+		return daprovider.PreimagesResult{Preimages: preimages}, err
+	})
 }
 
 func RecoverPayloadFromCelestiaBatch(

@@ -10,7 +10,6 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
 
 `FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.5.4`
 
-
 ## Example usage
 
 ```
@@ -20,7 +19,7 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
       --celestia.gas-price $GAS_PRICE \
       --celestia.gas-multiplier $GAS_MULTIPLIER \
       --celestia.namespace-id $NAMESPACEID \
-      --celestia.rpc $CELESTIA_NODE_ENDPOINT 
+      --celestia.rpc $CELESTIA_NODE_ENDPOINT
 ```
 
 ## Running Docker Image
@@ -59,6 +58,7 @@ daprovider:
 ```
 
 This then can be used in your celestia server as:
+
 ```
 celestia-server:
     image: ghcr.io/celestiaorg/nitro-das-celestia:v0.5.4
@@ -94,7 +94,6 @@ celestia-server:
 Usage of daserver:
       --celestia.auth-token string                         Auth token for Celestia Node
       --celestia.cache-time duration                       how often to clean the in memory cache (default 30m0s)
-      --celestia.dangerous-reorg-on-read-failure           DANGEROUS: reorg if any error during reads from celestia node
       --celestia.enable                                    Enable Celestia DA
       --celestia.gas-multiplier float                      Gas multiplier for Celestia transactions (default 1.01)
       --celestia.gas-price float                           Gas for retrying Celestia transactions (default 0.01)
@@ -148,19 +147,19 @@ If you are running a celestia-server as part of a full node setup for an orbit x
 - you only need a namespace to use when fetching data from Celestia (the rollup should make this clear and accesible to you), and a celestia-node endpoint (core / consensus endpoints won't work!). If you do not wish to run your own celestia light node, or da bridge node, you can get a hosted endpoint from providers like:
   - [Quicknode](https://www.quicknode.com/docs/celestia)
 
-
-
 ## Running a Validator
+>
 >[!CAUTION]
 > The celestia server binary won't throw an error if you forget to set the validator config, if you are running validators for your chain, please read carefully
 
 In order to ensure the validator for an Orbit chain is capable of fulffiling its role in case of a challenge, its important that the celestia-server command is given the following flags / configurations:
+
 - `--celestia.validator-config.blobstream string        Blobstream address, only used for validation`
 - `--celestia.validator-config.eth-rpc string           Parent chain connection, only used for validation`
 
 Additionally the `--celestia.validator-config.sleep-time` lets you configure how many seconds you want the `GetProof` method to wait before trying to fetch for an onchain event for a Blobstream proof (default is `3600` or 1 hour). Note that all the validator config values can be hot reloaded.
 
-For the `blobstream` flag, you want to pass an address for the blobstream instance in the parent chain (i.e if you are running a validator for an Ethereum L2, the parent chain is Ethereum Mainnet), addresses for currently deployed instances of [SP1 Blobstream](https://docs.celestia.org/how-to-guides/blobstream#what-is-sp1-blobstream) can be found [here](https://docs.celestia.org/how-to-guides/blobstream#deployed-contracts). If you are deploying on a parent chain that is not in this list, please follow [this guide ](https://docs.celestia.org/how-to-guides/sp1-blobstream-deploy) to get a new deployment running and contact, and reach out to the [Succinct Team](https://linktr.ee/succinctlabs) for more information.
+For the `blobstream` flag, you want to pass an address for the blobstream instance in the parent chain (i.e if you are running a validator for an Ethereum L2, the parent chain is Ethereum Mainnet), addresses for currently deployed instances of [SP1 Blobstream](https://docs.celestia.org/how-to-guides/blobstream#what-is-sp1-blobstream) can be found [here](https://docs.celestia.org/how-to-guides/blobstream#deployed-contracts). If you are deploying on a parent chain that is not in this list, please follow [this guide](https://docs.celestia.org/how-to-guides/sp1-blobstream-deploy) to get a new deployment running and contact, and reach out to the [Succinct Team](https://linktr.ee/succinctlabs) for more information.
 
 For the `eth-rpc` flag, you just need to provide an rpc for the parent chain, and since you are running a node you likely already have an endpoint available in your nitro node config that can be re-used here. (NOTE: connection type is http)
 
@@ -177,4 +176,3 @@ The easiest way to run the test is to:
 - run `go test -v -timeout 30s -run ^TestGetProofVerification$/^Get_Proof_e2e$`
 
 For those interested in doing their own testing, you can switch the values in the `.env` accordingly (make sure you are using the correct blobstream address for the network given in the ETH_RPC variable. All other values can be found through the celestia node cli or through the use of an explorer such as [Celenium](https://celenium.io/). If you are going to perform the test against a network other than Arbitrum One, you will need to deploy the wrapper contract around the blobstream verification library, the necessary contracts and deployment scripts can be found in the [`test`](https://github.com/celestiaorg/nitro-das-celestia/tree/main/test) folder
-

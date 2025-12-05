@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/offchainlabs/nitro/util/containers"
 )
 
@@ -40,17 +41,14 @@ func (c *writerForCelestia) Store(
 	message []byte,
 	timeout uint64,
 ) containers.PromiseInterface[[]byte] {
-	promise, ctx := containers.NewPromiseWithContext[[]byte](context.Background())
-	go func() {
-		cert, err := c.celestiaWriter.Store(ctx, message)
+	return containers.DoPromise(context.Background(), func(ctx context.Context) ([]byte, error) {
+		cert, err := c.celestiaWriter.Store(context.Background(), message)
 		if err != nil {
-			promise.ProduceError(err)
-		} else {
-			promise.Produce(cert)
+			log.Error("Returning error from Celestia writer", "err", err)
+			return nil, err
 		}
-	}()
-
-	return promise
+		return cert, nil
+	})
 }
 
 func (d *writerForCelestia) Type() string {

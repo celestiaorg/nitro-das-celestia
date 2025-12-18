@@ -2,222 +2,266 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	flag "github.com/spf13/pflag"
 
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/ethereum/go-ethereum/log"
 	gethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/metrics/exp"
 
 	"github.com/offchainlabs/nitro/cmd/genericconf"
-	"github.com/offchainlabs/nitro/cmd/util/confighelpers"
 	"github.com/offchainlabs/nitro/daprovider/daclient"
-	"github.com/offchainlabs/nitro/util/headerreader"
 	"github.com/offchainlabs/nitro/util/rpcclient"
 
+	"github.com/celestiaorg/nitro-das-celestia/config"
 	das "github.com/celestiaorg/nitro-das-celestia/daserver"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
+	"github.com/celestiaorg/nitro-das-celestia/signer"
 )
-
-type CelestiaDAServerConfig struct {
-	EnableRPC          bool                                `koanf:"enable-rpc"`
-	RPCAddr            string                              `koanf:"rpc-addr"`
-	RPCPort            uint64                              `koanf:"rpc-port"`
-	RPCServerTimeouts  genericconf.HTTPServerTimeoutConfig `koanf:"rpc-server-timeouts"`
-	RPCServerBodyLimit int                                 `koanf:"rpc-server-body-limit"`
-
-	CelestiaDa das.DAConfig `koanf:"celestia"`
-
-	DasClientConfig daclient.ClientConfig `koanf:"das"`
-
-	FallbackEnabled bool `koanf:"fallback-enabled"`
-
-	LogLevel string `koanf:"log-level"`
-	LogType  string `koanf:"log-type"`
-
-	Metrics       bool                            `koanf:"metrics"`
-	MetricsServer genericconf.MetricsServerConfig `koanf:"metrics-server"`
-	PProf         bool                            `koanf:"pprof"`
-	PprofCfg      genericconf.PProf               `koanf:"pprof-cfg"`
-}
-
-var DefaultCelestiaDAServerConfig = CelestiaDAServerConfig{
-	EnableRPC:          true,
-	RPCAddr:            "localhost",
-	RPCPort:            9876,
-	RPCServerTimeouts:  genericconf.HTTPServerTimeoutConfigDefault,
-	RPCServerBodyLimit: genericconf.HTTPServerBodyLimitDefault,
-	FallbackEnabled:    false,
-	LogLevel:           "INFO",
-	LogType:            "plaintext",
-	Metrics:            false,
-	MetricsServer:      genericconf.MetricsServerConfigDefault,
-	PProf:              false,
-	PprofCfg:           genericconf.PProfDefault,
-	DasClientConfig:    daclient.DefaultClientConfig,
-}
 
 func main() {
 	if err := startup(); err != nil {
 		gethlog.Error("Error running CelestiaDAServer", "err", err)
+		os.Exit(1)
 	}
 }
 
-func printSampleUsage(progname string) {
-	fmt.Printf("\n")
-	fmt.Printf("Sample usage:                  %s --help \n", progname)
+func printUsage(progname string) {
+	fmt.Printf("\nUsage: %s --config <path/to/config.toml>\n", progname)
+	fmt.Printf("\nCelestia DAS Server - Data Availability Server for Arbitrum Nitro\n")
+	fmt.Printf("\nOptions:\n")
+	fmt.Printf("  --config string    Path to TOML configuration file (required)\n")
+	fmt.Printf("  --help             Show this help message\n")
+	fmt.Printf("  --version          Show version information\n")
+	fmt.Printf("\nExample:\n")
+	fmt.Printf("  %s --config /path/to/config.toml\n", progname)
+	fmt.Printf("\nFor config file format, see config.example.toml\n")
 }
 
-func parseDAServer(args []string) (*CelestiaDAServerConfig, error) {
-	f := flag.NewFlagSet("daserver", flag.ContinueOnError)
-	f.Bool("enable-rpc", DefaultCelestiaDAServerConfig.EnableRPC, "enable the HTTP-RPC server listening on rpc-addr and rpc-port")
-	f.String("rpc-addr", DefaultCelestiaDAServerConfig.RPCAddr, "HTTP-RPC server listening interface")
-	f.Uint64("rpc-port", DefaultCelestiaDAServerConfig.RPCPort, "HTTP-RPC server listening port")
-	f.Int("rpc-server-body-limit", DefaultCelestiaDAServerConfig.RPCServerBodyLimit, "HTTP-RPC server maximum request body size in bytes; the default (0) uses geth's 5MB limit")
-	genericconf.HTTPServerTimeoutConfigAddOptions("rpc-server-timeouts", f)
+func parseArgs() (string, error) {
+	f := flag.NewFlagSet("celestia-das-server", flag.ContinueOnError)
+	configPath := f.String("config", "", "Path to TOML configuration file (required)")
+	help := f.Bool("help", false, "Show help")
+	version := f.Bool("version", false, "Show version")
 
-	f.Bool("metrics", DefaultCelestiaDAServerConfig.Metrics, "enable metrics")
-	genericconf.MetricsServerAddOptions("metrics-server", f)
-
-	f.Bool("pprof", DefaultCelestiaDAServerConfig.PProf, "enable pprof")
-	genericconf.PProfAddOptions("pprof-cfg", f)
-
-	f.String("log-level", DefaultCelestiaDAServerConfig.LogLevel, "log level, valid values are CRIT, ERROR, WARN, INFO, DEBUG, TRACE")
-	f.String("log-type", DefaultCelestiaDAServerConfig.LogType, "log type (plaintext or json)")
-
-	f.Bool("fallback-enabled", DefaultCelestiaDAServerConfig.FallbackEnabled, "enable fallbacks to arbitrum anytrust")
-
-	das.CelestiaDAConfigAddOptions("celestia", f)
-
-	daclient.ClientConfigAddOptions("das", f)
-
-	k, err := confighelpers.BeginCommonParse(f, args)
-	if err != nil {
-		return nil, err
+	// Parse flags
+	if err := f.Parse(os.Args[1:]); err != nil {
+		return "", err
 	}
 
-	var serverConfig CelestiaDAServerConfig
-	if err := confighelpers.EndCommonParse(k, &serverConfig); err != nil {
-		return nil, err
+	if *help {
+		printUsage(os.Args[0])
+		os.Exit(0)
 	}
 
-	return &serverConfig, nil
+	if *version {
+		fmt.Println("Celestia DAS Server v0.7.0")
+		os.Exit(0)
+	}
+
+	if *configPath == "" {
+		return "", fmt.Errorf("--config flag is required")
+	}
+
+	return *configPath, nil
 }
 
-type L1ReaderCloser struct {
-	l1Reader *headerreader.HeaderReader
-}
-
-func (c *L1ReaderCloser) Close(_ context.Context) error {
-	c.l1Reader.StopOnly()
-	return nil
-}
-
-func (c *L1ReaderCloser) String() string {
-	return "l1 reader closer"
-}
-
-// Checks metrics and PProf flag, runs them if enabled.
-// Note: they are separate so one can enable/disable them as they wish, the only
-// requirement is that they can't run on the same address and port.
-func startMetrics(cfg *CelestiaDAServerConfig) error {
-	mAddr := fmt.Sprintf("%v:%v", cfg.MetricsServer.Addr, cfg.MetricsServer.Port)
-	pAddr := fmt.Sprintf("%v:%v", cfg.PprofCfg.Addr, cfg.PprofCfg.Port)
-	if cfg.Metrics && cfg.PProf && mAddr == pAddr {
-		return fmt.Errorf("metrics must be enabled via command line by adding --metrics, json config has no effect")
+// startMetrics starts metrics and pprof servers if enabled
+func startMetrics(cfg *config.Config) error {
+	if cfg.Metrics.Enabled && cfg.Metrics.PProf {
+		mAddr := fmt.Sprintf("%s:%d", cfg.Metrics.Addr, cfg.Metrics.Port)
+		pAddr := fmt.Sprintf("%s:%d", cfg.Metrics.PProfAddr, cfg.Metrics.PProfPort)
+		if mAddr == pAddr {
+			return fmt.Errorf("metrics and pprof cannot be enabled on the same address:port: %s", mAddr)
+		}
 	}
-	if cfg.Metrics && cfg.PProf && mAddr == pAddr {
-		return fmt.Errorf("metrics and pprof cannot be enabled on the same address:port: %s", mAddr)
+
+	if cfg.Metrics.Enabled {
+		mAddr := fmt.Sprintf("%s:%d", cfg.Metrics.Addr, cfg.Metrics.Port)
+		go metrics.CollectProcessMetrics(3 * time.Second)
+		exp.Setup(mAddr)
+		log.Info("Metrics server started", "addr", mAddr)
 	}
-	if cfg.Metrics {
-		go metrics.CollectProcessMetrics(cfg.MetricsServer.UpdateInterval)
-		exp.Setup(fmt.Sprintf("%v:%v", cfg.MetricsServer.Addr, cfg.MetricsServer.Port))
-	}
-	if cfg.PProf {
+
+	if cfg.Metrics.PProf {
+		pAddr := fmt.Sprintf("%s:%d", cfg.Metrics.PProfAddr, cfg.Metrics.PProfPort)
 		genericconf.StartPprof(pAddr)
+		log.Info("PProf server started", "addr", pAddr)
 	}
+
 	return nil
+}
+
+// parseTimeouts converts config timeout strings to HTTPServerTimeoutConfig
+func parseTimeouts(cfg *config.Config) genericconf.HTTPServerTimeoutConfig {
+	readTimeout, _ := time.ParseDuration(cfg.Server.ReadTimeout)
+	readHeaderTimeout, _ := time.ParseDuration(cfg.Server.ReadHeaderTimeout)
+	writeTimeout, _ := time.ParseDuration(cfg.Server.WriteTimeout)
+	idleTimeout, _ := time.ParseDuration(cfg.Server.IdleTimeout)
+
+	// Use defaults if parsing fails
+	if readTimeout == 0 {
+		readTimeout = 30 * time.Second
+	}
+	if readHeaderTimeout == 0 {
+		readHeaderTimeout = 10 * time.Second
+	}
+	if writeTimeout == 0 {
+		writeTimeout = 30 * time.Second
+	}
+	if idleTimeout == 0 {
+		idleTimeout = 120 * time.Second
+	}
+
+	return genericconf.HTTPServerTimeoutConfig{
+		ReadTimeout:       readTimeout,
+		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}
 }
 
 func startup() error {
-
-	serverConfig, err := parseDAServer(os.Args[1:])
+	// Parse command line arguments
+	configPath, err := parseArgs()
 	if err != nil {
-		fmt.Println("Server config: ", serverConfig)
-		confighelpers.PrintErrorAndExit(err, printSampleUsage)
-	}
-	if !(serverConfig.EnableRPC) {
-		confighelpers.PrintErrorAndExit(errors.New("please specify --enable-rpc"), printSampleUsage)
+		printUsage(os.Args[0])
+		return err
 	}
 
-	logLevel, err := genericconf.ToSlogLevel(serverConfig.LogLevel)
+	// Load configuration from TOML file
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		confighelpers.PrintErrorAndExit(err, printSampleUsage)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	handler, err := genericconf.HandlerFromLogType(serverConfig.LogType, io.Writer(os.Stderr))
+	// Setup logging first
+	logLevel, err := genericconf.ToSlogLevel(cfg.Logging.Level)
 	if err != nil {
-		flag.Usage()
-		return fmt.Errorf("error parsing log type when creating handler: %w", err)
+		return fmt.Errorf("invalid log level %q: %w", cfg.Logging.Level, err)
+	}
+
+	handler, err := genericconf.HandlerFromLogType(cfg.Logging.Type, io.Writer(os.Stderr))
+	if err != nil {
+		return fmt.Errorf("error creating log handler: %w", err)
 	}
 	glogger := gethlog.NewGlogHandler(handler)
 	glogger.Verbosity(logLevel)
 	gethlog.SetDefault(gethlog.NewLogger(glogger))
 
-	if err := startMetrics(serverConfig); err != nil {
+	// Print configuration with masked secrets
+	log.Info("Starting Celestia DAS Server")
+	fmt.Print(cfg.PrintConfig())
+
+	// Start metrics if enabled
+	if err := startMetrics(cfg); err != nil {
 		return err
 	}
 
+	// Setup signal handling
 	sigint := make(chan os.Signal, 1)
 	signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	celestiaDA, err := das.NewCelestiaDA(&serverConfig.CelestiaDa)
-	var celestiaReader types.CelestiaReader
-	var celestiaWriter types.CelestiaWriter
-	var rpcServer *http.Server
-	if serverConfig.EnableRPC {
-		if err != nil {
-			return err
-		}
-		celestiaReader = celestiaDA
-		celestiaWriter = celestiaDA
 
-		if serverConfig.FallbackEnabled {
-			log.Info("Creating client with DAS Fallback", "fallbackEnabled", serverConfig.FallbackEnabled)
-			clientConfig := serverConfig.DasClientConfig.RPC
-			client, err := daclient.NewClient(ctx, func() *rpcclient.ClientConfig { return &clientConfig })
-			if err != nil {
-				panic(fmt.Sprintf("Failed to create client: %v", err))
-			}
-			defer client.Close()
-			rpcServer, err = das.StartDASRPCServer(ctx, serverConfig.RPCAddr, serverConfig.RPCPort, serverConfig.RPCServerTimeouts, serverConfig.RPCServerBodyLimit, celestiaReader, celestiaWriter, client, true)
-			if err != nil {
-				panic(fmt.Sprintf("Failed to create client: %v", err))
-			}
-		} else {
-			log.Info("Creating client without DAS Fallback", "fallbackEnabled", serverConfig.FallbackEnabled)
-			rpcServer, err = das.StartDASRPCServer(ctx, serverConfig.RPCAddr, serverConfig.RPCPort, serverConfig.RPCServerTimeouts, serverConfig.RPCServerBodyLimit, celestiaReader, celestiaWriter, nil, false)
-			if err != nil {
-				return err
-			}
+	// Create keyring if writer is enabled
+	var kr keyring.Keyring
+	if cfg.Celestia.WithWriter && !cfg.Celestia.NoopWriter {
+		kr, err = signer.NewKeyring(&cfg.Celestia.Signer, cfg.Celestia.Network)
+		if err != nil {
+			return fmt.Errorf("failed to create keyring: %w", err)
+		}
+		log.Info("Keyring initialized", "type", cfg.Celestia.Signer.Type)
+	}
+
+	// Create DAConfig from TOML config
+	daCfg, err := das.NewDAConfigFromTOML(cfg, kr)
+	if err != nil {
+		return fmt.Errorf("failed to create DA config: %w", err)
+	}
+
+	// Create CelestiaDA instance
+	celestiaDA, err := das.NewCelestiaDA(daCfg)
+	if err != nil {
+		return fmt.Errorf("failed to create CelestiaDA: %w", err)
+	}
+	defer celestiaDA.Stop()
+
+	var celestiaReader types.CelestiaReader = celestiaDA
+	var celestiaWriter types.CelestiaWriter = celestiaDA
+	var rpcServer *http.Server
+
+	// Parse HTTP server timeouts
+	timeouts := parseTimeouts(cfg)
+
+	// Start RPC server with or without fallback
+	if cfg.Fallback.Enabled && cfg.Fallback.DASRPC != "" {
+		log.Info("Creating server with DAS Fallback", "fallbackEnabled", true, "dasRpc", cfg.Fallback.DASRPC)
+		clientConfig := rpcclient.ClientConfig{URL: cfg.Fallback.DASRPC}
+		client, err := daclient.NewClient(ctx, func() *rpcclient.ClientConfig { return &clientConfig })
+		if err != nil {
+			return fmt.Errorf("failed to create fallback DAS client: %w", err)
+		}
+		defer client.Close()
+
+		rpcServer, err = das.StartDASRPCServer(
+			ctx,
+			cfg.Server.RPCAddr,
+			cfg.Server.RPCPort,
+			timeouts,
+			cfg.Server.RPCBodyLimit,
+			celestiaReader,
+			celestiaWriter,
+			client,
+			true,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to start RPC server with fallback: %w", err)
+		}
+	} else {
+		log.Info("Creating server without DAS Fallback")
+		rpcServer, err = das.StartDASRPCServer(
+			ctx,
+			cfg.Server.RPCAddr,
+			cfg.Server.RPCPort,
+			timeouts,
+			cfg.Server.RPCBodyLimit,
+			celestiaReader,
+			celestiaWriter,
+			nil,
+			false,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to start RPC server: %w", err)
 		}
 	}
 
+	log.Info("CelestiaDA Server started",
+		"addr", cfg.Server.RPCAddr,
+		"port", cfg.Server.RPCPort,
+		"writer", cfg.Celestia.WithWriter,
+		"network", cfg.Celestia.Network,
+		"namespace", cfg.Celestia.NamespaceID,
+	)
+
+	// Wait for shutdown signal
 	<-sigint
-	celestiaDA.Stop()
+	log.Info("Shutting down...")
 
 	if rpcServer != nil {
-		err = rpcServer.Shutdown(ctx)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		err = rpcServer.Shutdown(shutdownCtx)
 	}
 
 	return err

@@ -12,9 +12,10 @@ import (
 	"github.com/offchainlabs/nitro/daprovider"
 )
 
-// CelestiaMessageHeaderFlag indicates that this data is a Blob Pointer
-// which will be used to retrieve data from Celestia
-const CelestiaMessageHeaderFlag byte = 0x63
+// CelestiaMessageHeaderFlag is the header byte for Celestia DA certificates.
+// This matches CUSTOM_DA_MESSAGE_HEADER_FLAG (0x01) in Nitro's SequencerInbox contract.
+// Note: Previously was 0x63 for the Celestia fork of Nitro, but official Nitro v3.9.x uses 0x01.
+const CelestiaMessageHeaderFlag byte = 0x01
 
 // IsCelestiaMessageHeaderByte checks if a header byte indicates Celestia DA
 func IsCelestiaMessageHeaderByte(header byte) bool {
@@ -120,7 +121,7 @@ func CollectPreimagesFromCelestia(
 func extractBlobPointerFromSequencerMsg(sequencerMsg []byte) (*BlobPointer, error) {
 	// Sequencer message format:
 	// Bytes 0-39: Batch header (40 bytes)
-	// Byte 40: DA type header (0x63 for Celestia)
+	// Byte 40: DA type header (0x01 for external/custom DA)
 	// Bytes 41+: BlobPointer data
 
 	if len(sequencerMsg) < 41 {

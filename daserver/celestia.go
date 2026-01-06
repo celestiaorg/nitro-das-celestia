@@ -185,9 +185,10 @@ var (
 	ErrTxIncorrectAccountSequence = errors.New("incorrect account sequence")
 )
 
-// CelestiaMessageHeaderFlag indicates that this data is a Blob Pointer
-// which will be used to retrieve data from Celestia
-const CelestiaMessageHeaderFlag byte = 0x63
+// CelestiaMessageHeaderFlag is the header byte for Celestia DA certificates.
+// This matches CUSTOM_DA_MESSAGE_HEADER_FLAG (0x01) in Nitro's SequencerInbox contract.
+// Note: Previously was 0x63 for the Celestia fork of Nitro, but official Nitro v3.9.x uses 0x01.
+const CelestiaMessageHeaderFlag byte = 0x01
 
 func hasBits(checking byte, bits byte) bool {
 	return (checking & bits) == bits

@@ -19,8 +19,6 @@ import (
 	"github.com/ethereum/go-ethereum/metrics/exp"
 
 	"github.com/offchainlabs/nitro/cmd/genericconf"
-	"github.com/offchainlabs/nitro/daprovider/daclient"
-	"github.com/offchainlabs/nitro/util/rpcclient"
 
 	"github.com/celestiaorg/nitro-das-celestia/config"
 	das "github.com/celestiaorg/nitro-das-celestia/daserver"
@@ -204,46 +202,19 @@ func startup() error {
 	// Parse HTTP server timeouts
 	timeouts := parseTimeouts(cfg)
 
-	// Start RPC server with or without fallback
-	if cfg.Fallback.Enabled && cfg.Fallback.DASRPC != "" {
-		log.Info("Creating server with DAS Fallback", "fallbackEnabled", true, "dasRpc", cfg.Fallback.DASRPC)
-		clientConfig := rpcclient.ClientConfig{URL: cfg.Fallback.DASRPC}
-		client, err := daclient.NewClient(ctx, func() *rpcclient.ClientConfig { return &clientConfig })
-		if err != nil {
-			return fmt.Errorf("failed to create fallback DAS client: %w", err)
-		}
-		defer client.Close()
-
-		rpcServer, err = das.StartDASRPCServer(
-			ctx,
-			cfg.Server.RPCAddr,
-			cfg.Server.RPCPort,
-			timeouts,
-			cfg.Server.RPCBodyLimit,
-			celestiaReader,
-			celestiaWriter,
-			client,
-			true,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to start RPC server with fallback: %w", err)
-		}
-	} else {
-		log.Info("Creating server without DAS Fallback")
-		rpcServer, err = das.StartDASRPCServer(
-			ctx,
-			cfg.Server.RPCAddr,
-			cfg.Server.RPCPort,
-			timeouts,
-			cfg.Server.RPCBodyLimit,
-			celestiaReader,
-			celestiaWriter,
-			nil,
-			false,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to start RPC server: %w", err)
-		}
+	// Start RPC server
+	log.Info("Starting DA Provider RPC server")
+	rpcServer, err = das.StartDASRPCServer(
+		ctx,
+		cfg.Server.RPCAddr,
+		cfg.Server.RPCPort,
+		timeouts,
+		cfg.Server.RPCBodyLimit,
+		celestiaReader,
+		celestiaWriter,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to start RPC server: %w", err)
 	}
 
 	log.Info("CelestiaDA Server started",

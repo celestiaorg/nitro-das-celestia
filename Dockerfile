@@ -1,6 +1,6 @@
 # This Dockerfile performs a multi-stage build. BUILDER_IMAGE is the image used
-# to compile the celestia-appd binary. RUNTIME_IMAGE is the image that will be
-# returned with the final celestia-appd binary.
+# to compile the celestia-server binary. RUNTIME_IMAGE is the image that will be
+# returned with the final celestia-server binary.
 #
 # Separating the builder and runtime image allows the runtime image to be
 # considerably smaller because it doesn't need to have Golang installed.
@@ -9,7 +9,7 @@ ARG RUNTIME_IMAGE=docker.io/alpine:3.19.1
 ARG TARGETOS
 ARG TARGETARCH
 
-# Stage 1: Build the celestia-appd binary inside a builder image that will be discarded later.
+# Stage 1: Build the celestia-server binary inside a builder image that will be discarded later.
 # Ignore hadolint rule because hadolint can't parse the variable.
 # See https://github.com/hadolint/hadolint/issues/339
 # hadolint ignore=DL3006
@@ -42,10 +42,6 @@ ARG UID=10001
 ARG USER_NAME=celestia
 ENV CELESTIA_HOME=/home/${USER_NAME}
 
-ENV AUTH_TOKEN=""
-ENV NAMESPACEID=""
-ENV CELESTIA_NODE_ENDPOINT=""
-
 # Switch to root to install packages and create user
 USER root
 
@@ -74,5 +70,12 @@ WORKDIR ${CELESTIA_HOME}
 USER ${USER_NAME}
 
 # Expose ports:
-EXPOSE 1317 9090 26657 1095 8080 26658
-ENTRYPOINT ["sh", "-c", "/bin/celestia-server --celestia.auth-token $AUTH_TOKEN --celestia.namespace-id $NAMESPACEID --celestia.rpc $CELESTIA_NODE_ENDPOINT"]
+# 9876: DA Provider RPC (Nitro connects here)
+# 6060: Metrics
+# Legacy ports kept for compatibility
+EXPOSE 1317 9090 26657 1095 8080 26658 9876 6060
+
+# Use ENTRYPOINT for the binary, CMD for default arguments
+# This allows docker-compose to override the command arguments
+ENTRYPOINT ["/bin/celestia-server"]
+CMD ["--help"]

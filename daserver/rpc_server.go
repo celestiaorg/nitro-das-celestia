@@ -112,7 +112,7 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 	}
 
 	srv := &http.Server{
-		Handler:           rpcServer,
+		Handler:           newRPCMuxWithHealth(rpcServer),
 		ReadTimeout:       rpcServerTimeouts.ReadTimeout,
 		ReadHeaderTimeout: rpcServerTimeouts.ReadHeaderTimeout,
 		WriteTimeout:      rpcServerTimeouts.WriteTimeout,
@@ -130,6 +130,16 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 		_ = srv.Shutdown(context.Background())
 	}()
 	return srv, nil
+}
+
+func newRPCMuxWithHealth(rpcHandler http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+	mux.Handle("/", rpcHandler)
+	return mux
 }
 
 func (serv *CelestiaDASRPCServer) Store(ctx context.Context, message hexutil.Bytes) ([]byte, error) {
@@ -274,13 +284,20 @@ func (serv *DaClientServer) Store(
 	message hexutil.Bytes,
 	timeout hexutil.Uint64,
 ) (*server_api.StoreResult, error) {
+	// Nitro v3.9.x matches this exact error string to trigger batch resize.
+	if len(message) > CelestiaMaxBlobSize {
+		log.Warn("daprovider_store: message too large", "size", len(message), "max", CelestiaMaxBlobSize)
+		return nil, errors.New("message too large for current DA backend")
+	}
+
 	cert, err := serv.writer.Store(message, uint64(timeout)).Await(context.Background())
 	if err != nil {
-		// check if theres an error to log out on the da server
 		log.Error("daprovider_store: error storing data on celestia", "err", err)
+		// Nitro v3.9.x matches this exact prefix to trigger fallback to next writer.
+		return nil, fmt.Errorf("DA provider requests fallback to next writer: %w", err)
 	}
-	// will return the appropirate rpc result and error if any
-	return &server_api.StoreResult{SerializedDACert: cert}, err
+
+	return &server_api.StoreResult{SerializedDACert: cert}, nil
 }
 
 func (serv *DaClientServer) GetSupportedHeaderBytes(ctx context.Context) (*server_api.SupportedHeaderBytesResult, error) {

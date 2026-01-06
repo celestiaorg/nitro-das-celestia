@@ -45,6 +45,9 @@ import (
 	blobstreamx "github.com/succinctlabs/sp1-blobstream/bindings"
 )
 
+// CelestiaMaxBlobSize is the maximum blob size supported by Celestia (8 MB as of 2024)
+const CelestiaMaxBlobSize = 8 * 1024 * 1024 // 8,388,608 bytes
+
 type DAConfig struct {
 	WithWriter                  bool               `koanf:"with-writer"`
 	GasPrice                    float64            `koanf:"gas-price" reload:"hot"`
@@ -381,9 +384,29 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 		return nil, err
 	}
 
-	namespace, err := libshare.NewV0Namespace(nsBytes)
-	if err != nil {
-		return nil, err
+	// Handle both full namespace (29 bytes) and short subID (<=10 bytes) formats
+	var namespace libshare.Namespace
+	if len(nsBytes) == 29 {
+		// Full namespace format: 1 byte version + 28 bytes ID
+		// For v0 namespaces, extract the subID from the last 10 bytes of the ID
+		if nsBytes[0] != 0 {
+			return nil, fmt.Errorf("only v0 namespaces are supported, got version %d", nsBytes[0])
+		}
+		// The subID is the non-zero suffix of the 28-byte ID
+		// For v0, the first 18 bytes of ID should be zeros, leaving 10 bytes for subID
+		subID := nsBytes[19:] // Skip version byte (1) + zero padding (18) = 19 bytes
+		namespace, err = libshare.NewV0Namespace(subID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create namespace from full format: %w", err)
+		}
+	} else if len(nsBytes) <= 10 {
+		// Short subID format (direct subID, max 10 bytes)
+		namespace, err = libshare.NewV0Namespace(nsBytes)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, fmt.Errorf("invalid namespace_id length: %d bytes (expected 29 for full namespace or <=10 for subID)", len(nsBytes))
 	}
 
 	var readClient *txclient.ReadClient
@@ -406,7 +429,7 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 		}
 	}
 
-	if cfg.WithWriter {
+	if cfg.WithWriter && !cfg.NoopWriter {
 		// Check if we have an externally provided keyring (from TOML config)
 		// or if we're using the legacy ExperimentalTxClient flag
 		if cfg.Keyring != nil || cfg.ExperimentalTxClient {

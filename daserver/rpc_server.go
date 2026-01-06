@@ -83,8 +83,20 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 		return nil, err
 	}
 
+	// Create HTTP mux with health check and RPC handler
+	mux := http.NewServeMux()
+
+	// Health check endpoint for Docker/K8s
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	// RPC handler for all other requests
+	mux.Handle("/", rpcServer)
+
 	srv := &http.Server{
-		Handler:           rpcServer,
+		Handler:           mux,
 		ReadTimeout:       rpcServerTimeouts.ReadTimeout,
 		ReadHeaderTimeout: rpcServerTimeouts.ReadHeaderTimeout,
 		WriteTimeout:      rpcServerTimeouts.WriteTimeout,
@@ -147,16 +159,18 @@ func (s *DAProviderServer) Store(
 		return nil, errors.New("writer not configured")
 	}
 
-	// Check message size
+	// Check message size - use exact error string that Nitro matches for batch resize
 	if len(message) > CelestiaMaxBlobSize {
-		return nil, fmt.Errorf("message size %d exceeds max %d", len(message), CelestiaMaxBlobSize)
+		log.Warn("daprovider.Store message too large", "size", len(message), "max", CelestiaMaxBlobSize)
+		return nil, errors.New("message too large for current DA backend")
 	}
 
 	// Store to Celestia - returns certificate with header byte prepended
 	cert, err := s.celestiaWriter.Store(ctx, message)
 	if err != nil {
 		log.Error("daprovider.Store failed", "err", err)
-		return nil, err
+		// Use exact error string that Nitro matches for fallback to next writer
+		return nil, fmt.Errorf("DA provider requests fallback to next writer: %w", err)
 	}
 
 	rpcStoreStoredBytesGauge.Inc(int64(len(message)))

@@ -21,8 +21,10 @@ type StoreResult struct {
 }
 
 // PayloadResult is returned by recoverPayload
+// Note: Payload uses []byte (not hexutil.Bytes) because Nitro expects base64 encoding.
+// Go's encoding/json automatically base64-encodes []byte fields.
 type PayloadResult struct {
-	Payload hexutil.Bytes `json:"Payload"`
+	Payload []byte `json:"Payload"`
 }
 
 // PreimagesResult is returned by collectPreimages

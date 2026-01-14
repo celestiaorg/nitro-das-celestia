@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -24,6 +25,7 @@ import (
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/celestiaorg/rsmt2d"
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -58,6 +60,7 @@ type DAConfig struct {
 	ExperimentalTxClient        bool               `koanf:"experimental-tx-client"`
 	DangerousReorgOnReadFailure bool               `koanf:"dangerous-reorg-on-read-failure"`
 	RetryConfig                 RetryBackoffConfig `koanf:"retry-config"`
+	AWSKMSConfig                *awskeyring.Config     `koanf:"aws-kms-config"`
 }
 
 type RetryBackoffConfig struct {
@@ -183,6 +186,34 @@ var DefaultKeyringPath = func(tp string, network string) (string, error) {
 	), nil
 }
 
+func initKeyring(ctx context.Context, cfg *DAConfig) (keyring.Keyring, error) {
+	keyname := cfg.KeyName
+	if keyname == "" {
+		keyname = "my_celes_key"
+	}
+
+	backend := cfg.BackendName
+	if backend == "" {
+		backend = keyring.BackendTest
+	}
+
+	var kr keyring.Keyring
+	var err error
+	switch backend {
+	case "awskms":
+		if cfg.AWSKMSConfig == nil {
+			return nil, fmt.Errorf("AWS KMS config is required when using awskms backend")
+		}
+		kr, err = awskeyring.NewKMSKeyring(ctx, keyname, *cfg.AWSKMSConfig)
+	default:
+		kr, err = txclient.KeyringWithNewKey(txclient.KeyringConfig{
+			KeyName:     keyname,
+			BackendName: backend,
+		}, cfg.KeyPath)
+	}
+	return kr, err
+}
+
 func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 	if cfg == nil {
 		return nil, errors.New("celestia cfg cannot be blank")
@@ -232,13 +263,9 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 
 			log.Info("Key path", "path", cfg.KeyPath)
 			// Create a keyring
-			kr, err := txclient.KeyringWithNewKey(txclient.KeyringConfig{
-				KeyName:     cfg.KeyName,
-				BackendName: cfg.BackendName,
-			}, cfg.KeyPath)
+			kr, err := initKeyring(context.Background(), cfg)
 			if err != nil {
-				log.Error("failed to create keyring")
-				return nil, err
+				return nil, fmt.Errorf("failed to initialize keyring: %w", err)
 			}
 
 			if cfg.CoreURL == "" {

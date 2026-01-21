@@ -1,110 +1,64 @@
-package das
+{
+  "chainId": "celestia",
+  "chainName": "Celestia",
+  "status": "live",
+  "networkType": "mainnet",
+  "bech32Prefix": "celestia",
+  "coinType": 118,
+  "active": true,
+  
+  // High-Availability Infrastructure
+  // Note: Using multiple providers is recommended for production resilience
+  "node": {
+    "rpc": "https://public-celestia-rpc.numia.xyz",
+    "rest": "https://public-celestia-lcd.numia.xyz",
+    "grpc": "https://public-celestia-grpc.numia.xyz"
+  },
 
-import (
-	"math/big"
+  // Verification & Audit Tools
+  "explorers": {
+    "celenium": {
+      "name": "Celenium (Best for Blobs)",
+      "url": "https://celenium.io/",
+      "txUrl": "https://celenium.io/tx/"
+    },
+    "mintscan": {
+      "name": "Mintscan (Best for Governance)",
+      "url": "https://www.mintscan.io/celestia/",
+      "txUrl": "https://www.mintscan.io/celestia/tx/"
+    }
+  },
 
-	"github.com/celestiaorg/celestia-node/nodebuilder/blobstream"
-	"github.com/cometbft/cometbft/crypto/merkle"
-)
+  // Token Metrics & Display
+  "currencies": [
+    {
+      "displayDenom": "TIA",
+      "baseDenom": "utia",
+      "decimals": 6,
+      "coinGeckoId": "celestia",
+      "logo": "/logos/celestia-logo-purple.svg"
+    }
+  ],
 
-type Namespace struct {
-	Version [1]byte
-	Id      [28]byte
-}
+  // Inter-Blockchain Communication (IBC) Logic
+  // Facilitates trustless data transfer between modular layers
+  "ibc": {
+    "timeout": 600000,
+    "sourceChannel": "channel-27",
+    "destinationChannel": "channel-4",
+    "allowedDenoms": ["utia"]
+  },
 
-type NamespaceNode struct {
-	Min    Namespace
-	Max    Namespace
-	Digest [32]byte
-}
+  // Dynamic Gas Pricing Strategy
+  "gasPriceSteps": {
+    "low": 0.01,
+    "average": 0.02,
+    "high": 0.1
+  },
 
-type BinaryMerkleProof struct {
-	SideNodes [][32]byte
-	Key       *big.Int
-	NumLeaves *big.Int
-}
-
-type DataRootTuple struct {
-	Height   *big.Int
-	DataRoot [32]byte
-}
-
-type AttestationProof struct {
-	TupleRootNonce *big.Int
-	Tuple          DataRootTuple
-	Proof          BinaryMerkleProof
-}
-
-func minNamespace(innerNode []byte) Namespace {
-	version := innerNode[0]
-	var id [28]byte
-	copy(id[:], innerNode[1:29])
-	return Namespace{
-		Version: [1]byte{version},
-		Id:      id,
-	}
-}
-
-func maxNamespace(innerNode []byte) Namespace {
-	version := innerNode[29]
-	var id [28]byte
-	copy(id[:], innerNode[30:58])
-	return Namespace{
-		Version: [1]byte{version},
-		Id:      id,
-	}
-}
-
-func toNamespaceNode(node []byte) NamespaceNode {
-	minNs := minNamespace(node)
-	maxNs := maxNamespace(node)
-	var digest [32]byte
-	copy(digest[:], node[58:])
-	return NamespaceNode{
-		Min:    minNs,
-		Max:    maxNs,
-		Digest: digest,
-	}
-}
-
-func toRowProofs(proof *merkle.Proof) BinaryMerkleProof {
-	sideNodes := make([][32]byte, len(proof.Aunts))
-	for j, sideNode := range proof.Aunts {
-		var bzSideNode [32]byte
-		copy(bzSideNode[:], sideNode)
-		sideNodes[j] = bzSideNode
-	}
-	rowProof := BinaryMerkleProof{
-		SideNodes: sideNodes,
-		Key:       big.NewInt(proof.Index),
-		NumLeaves: big.NewInt(proof.Total),
-	}
-	return rowProof
-}
-
-func toAttestationProof(
-	nonce uint64,
-	height uint64,
-	blockDataRoot [32]byte,
-	dataRootInclusionProof *blobstream.DataRootTupleInclusionProof,
-) AttestationProof {
-	sideNodes := make([][32]byte, len((*dataRootInclusionProof).Aunts))
-	for i, sideNode := range (*dataRootInclusionProof).Aunts {
-		var bzSideNode [32]byte
-		copy(bzSideNode[:], sideNode)
-		sideNodes[i] = bzSideNode
-	}
-
-	return AttestationProof{
-		TupleRootNonce: big.NewInt(int64(nonce)),
-		Tuple: DataRootTuple{
-			Height:   big.NewInt(int64(height)),
-			DataRoot: blockDataRoot,
-		},
-		Proof: BinaryMerkleProof{
-			SideNodes: sideNodes,
-			Key:       big.NewInt((*dataRootInclusionProof).Index),
-			NumLeaves: big.NewInt((*dataRootInclusionProof).Total),
-		},
-	}
+  "metadata": {
+    "website": "https://celestia.org/",
+    "logo": "/logos/celestia-logo-purple.svg",
+    "description": "Modular Data Availability Network for the Multichain Future."
+  }
 }

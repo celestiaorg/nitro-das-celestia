@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -24,6 +25,7 @@ import (
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/celestiaorg/rsmt2d"
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -58,6 +60,29 @@ type DAConfig struct {
 	ExperimentalTxClient        bool               `koanf:"experimental-tx-client"`
 	DangerousReorgOnReadFailure bool               `koanf:"dangerous-reorg-on-read-failure"`
 	RetryConfig                 RetryBackoffConfig `koanf:"retry-config"`
+	AWSKMSConfig                AWSKMSConfig       `koanf:"aws-kms-config"`
+}
+
+// AWSKMSConfig configures the AWS KMS backend for signing Celestia transactions.
+type AWSKMSConfig struct {
+	Region        string `koanf:"region"`
+	Endpoint      string `koanf:"endpoint"`
+	AliasPrefix   string `koanf:"alias-prefix"`
+	AutoCreate    bool   `koanf:"auto-create"`
+	ImportKeyName string `koanf:"import-key-name"`
+	ImportKeyHex  string `koanf:"import-key-hex"`
+}
+
+// ToKeyringConfig converts to awskeyring.Config
+func (c *AWSKMSConfig) ToKeyringConfig() *awskeyring.Config {
+	return &awskeyring.Config{
+		Region:        c.Region,
+		Endpoint:      c.Endpoint,
+		AliasPrefix:   c.AliasPrefix,
+		AutoCreate:    c.AutoCreate,
+		ImportKeyName: c.ImportKeyName,
+		ImportKeyHex:  c.ImportKeyHex,
+	}
 }
 
 type RetryBackoffConfig struct {
@@ -148,7 +173,7 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.String(prefix+".core-network", "celestia", "Celestia Network to use")
 	f.String(prefix+".key-name", "my_celes_key", "key name to use")
 	f.String(prefix+".key-path", "", "key path to use")
-	f.String(prefix+".backend-name", "test", "keyring backend to use")
+	f.String(prefix+".backend-name", "test", "keyring backend to use (test, file, os, kwallet, pass, keychain, memory, awskms)")
 	f.Bool(prefix+".enable-da-tls", false, "enable TLS for DA node")
 	f.Bool(prefix+".enable-core-tls", false, "enable TLS for Core node")
 	f.Bool(prefix+".noop-writer", false, "Noop writer (disable posting to celestia)")
@@ -158,6 +183,16 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Bool(prefix+".dangerous-reorg-on-read-failure", false, "DANGEROUS: reorg if any error during reads from celestia node")
 	f.Duration(prefix+".cache-time", time.Hour/2, "how often to clean the in memory cache")
 	CelestiaRetryConfigAddOptions(prefix+".retry-config", f)
+	CelestiaAWSKMSConfigAddOptions(prefix+".aws-kms-config", f)
+}
+
+func CelestiaAWSKMSConfigAddOptions(prefix string, f *pflag.FlagSet) {
+	f.String(prefix+".region", "us-east-1", "AWS region for KMS")
+	f.String(prefix+".endpoint", "", "AWS KMS endpoint (use http://localhost:4566 for localstack)")
+	f.String(prefix+".alias-prefix", "alias/nitro-das-celestia/", "Prefix for KMS key aliases")
+	f.Bool(prefix+".auto-create", false, "Automatically create KMS keys if they don't exist")
+	f.String(prefix+".import-key-name", "", "Name for imported key (requires import-key-hex)")
+	f.String(prefix+".import-key-hex", "", "Hex-encoded private key to import into KMS (32 bytes)")
 }
 
 var DefaultKeyringPath = func(tp string, network string) (string, error) {
@@ -181,6 +216,35 @@ var DefaultKeyringPath = func(tp string, network string) (string, error) {
 		strings.ToLower(tp),
 		strings.ToLower(network),
 	), nil
+}
+
+func initKeyring(ctx context.Context, cfg *DAConfig) (keyring.Keyring, error) {
+	keyname := cfg.KeyName
+	if keyname == "" {
+		keyname = "my_celes_key"
+	}
+
+	backend := cfg.BackendName
+	if backend == "" {
+		backend = keyring.BackendTest
+	}
+
+	var kr keyring.Keyring
+	var err error
+	switch backend {
+	case "awskms":
+		if cfg.AWSKMSConfig.Region == "" {
+			return nil, fmt.Errorf("AWS KMS region is required when using awskms backend")
+		}
+		kmsConfig := cfg.AWSKMSConfig.ToKeyringConfig()
+		kr, err = awskeyring.NewKMSKeyring(ctx, keyname, *kmsConfig)
+	default:
+		kr, err = txclient.KeyringWithNewKey(txclient.KeyringConfig{
+			KeyName:     keyname,
+			BackendName: backend,
+		}, cfg.KeyPath)
+	}
+	return kr, err
 }
 
 func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
@@ -232,13 +296,9 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 
 			log.Info("Key path", "path", cfg.KeyPath)
 			// Create a keyring
-			kr, err := txclient.KeyringWithNewKey(txclient.KeyringConfig{
-				KeyName:     cfg.KeyName,
-				BackendName: cfg.BackendName,
-			}, cfg.KeyPath)
+			kr, err := initKeyring(context.Background(), cfg)
 			if err != nil {
-				log.Error("failed to create keyring")
-				return nil, err
+				return nil, fmt.Errorf("failed to initialize keyring: %w", err)
 			}
 
 			if cfg.CoreURL == "" {

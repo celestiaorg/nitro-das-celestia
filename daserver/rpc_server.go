@@ -10,12 +10,11 @@ import (
 	"time"
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
-	"github.com/ethereum/go-ethereum/common"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/validator"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
-	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/offchainlabs/nitro/util/pretty"
 
 	"github.com/offchainlabs/nitro/daprovider/data_streaming"

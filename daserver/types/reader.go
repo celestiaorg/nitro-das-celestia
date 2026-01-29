@@ -138,8 +138,8 @@ func RecoverPayloadFromCelestiaBatch(
 
 	blobPointer := BlobPointer{
 		BlockHeight:  parsed.Height,
-		Start:        uint64(parsed.ShareStart),
-		SharesLength: uint64(parsed.ShareLen),
+		Start:        parsed.ShareStart,
+		SharesLength: parsed.ShareLen,
 		TxCommitment: parsed.TxCommitment,
 		DataRoot:     parsed.DataRoot,
 	}

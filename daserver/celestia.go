@@ -517,13 +517,6 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	}
 	log.Info("Posted blob to height and dataRoot", "height", blobPointer.BlockHeight, "dataRoot", hex.EncodeToString(blobPointer.DataRoot[:]))
 
-	blobPointerData, err := blobPointer.MarshalBinary()
-	if err != nil {
-		celestiaFailureCounter.Inc(1)
-		log.Warn("BlobPointer MashalBinary error", "err", err)
-		return nil, err
-	}
-
 	celestiaCert, err := types.BuildCelestiaCertificate(blobPointer, c.Namespace.Bytes(), nil)
 	if err != nil {
 		celestiaFailureCounter.Inc(1)

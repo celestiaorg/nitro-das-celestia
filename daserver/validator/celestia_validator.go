@@ -24,20 +24,20 @@ type ValidityProofResult struct {
 }
 
 func (v *CelestiaValidator) GenerateReadPreimageProof(offset uint64, certificate []byte) containers.PromiseInterface[PreimageProofResult] {
-	parsed, err := cert.Deserialize(certificate)
+	_, err := cert.Deserialize(certificate)
 	if err != nil {
 		return containers.NewReadyPromise(PreimageProofResult{}, err)
 	}
 	if offset != 0 {
 		return containers.NewReadyPromise(PreimageProofResult{}, errors.New("offset not supported"))
 	}
-	return containers.NewReadyPromise(PreimageProofResult{Proof: parsed.Proof}, nil)
+	return containers.NewReadyPromise(PreimageProofResult{Proof: nil}, nil)
 }
 
 func (v *CelestiaValidator) GenerateCertificateValidityProof(certificate []byte) containers.PromiseInterface[ValidityProofResult] {
-	parsed, err := cert.Deserialize(certificate)
+	_, err := cert.Deserialize(certificate)
 	if err != nil {
 		return containers.NewReadyPromise(ValidityProofResult{}, err)
 	}
-	return containers.NewReadyPromise(ValidityProofResult{Proof: parsed.Proof}, nil)
+	return containers.NewReadyPromise(ValidityProofResult{Proof: nil}, nil)
 }

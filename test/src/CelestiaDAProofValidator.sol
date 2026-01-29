@@ -26,16 +26,14 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         bytes calldata certificate = proof[CERT_SIZE_LEN:CERT_SIZE_LEN + certSize];
 
         require(keccak256(certificate) == certHash, "Certificate hash mismatch");
-        require(certificate.length >= 128, "Invalid certificate length");
+        require(certificate.length == 124, "Invalid certificate length");
         require(certificate[0] == bytes1(uint8(CERT_HEADER)), "Invalid certificate header");
         require(certificate[1] == bytes1(uint8(PROVIDER_TYPE)), "Invalid provider type");
 
-        // Extract proof bytes from certificate: last 4 bytes before proof is proofLen
-        uint256 proofLen = uint256(uint32(bytes4(certificate[124:128])));
-        require(certificate.length == 128 + proofLen, "Invalid proof length");
-
-        // Validate certificate proof on-chain
-        CelestiaBatchVerifier.Result res = CelestiaBatchVerifier.verifyBatch(blobstreamX, certificate[68:]);
+        // Validate certificate proof on-chain. Proof data is supplied in the proof bytes after the cert.
+        uint256 proofStart = CERT_SIZE_LEN + certSize + CLAIMED_VALID_LEN;
+        bytes calldata proofData = proof[proofStart:];
+        CelestiaBatchVerifier.Result res = CelestiaBatchVerifier.verifyBatch(blobstreamX, proofData);
         require(res == CelestiaBatchVerifier.Result.IN_BLOBSTREAM, "Invalid Celestia proof");
 
         // offset-based preimage read is handled by the preimage oracle; return empty
@@ -53,7 +51,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         );
 
         bytes calldata certificate = proof[CERT_SIZE_LEN:CERT_SIZE_LEN + certSize];
-        if (certificate.length < 128) {
+        if (certificate.length != 124) {
             return false;
         }
         if (certificate[0] != bytes1(uint8(CERT_HEADER))) {
@@ -63,12 +61,9 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             return false;
         }
 
-        uint256 proofLen = uint256(uint32(bytes4(certificate[124:128])));
-        if (certificate.length != 128 + proofLen) {
-            return false;
-        }
-
-        CelestiaBatchVerifier.Result res = CelestiaBatchVerifier.verifyBatch(blobstreamX, certificate[68:]);
+        uint256 proofStart = CERT_SIZE_LEN + certSize + CLAIMED_VALID_LEN;
+        bytes calldata proofData = proof[proofStart:];
+        CelestiaBatchVerifier.Result res = CelestiaBatchVerifier.verifyBatch(blobstreamX, proofData);
         return res == CelestiaBatchVerifier.Result.IN_BLOBSTREAM;
     }
 }

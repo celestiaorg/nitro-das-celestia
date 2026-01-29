@@ -22,7 +22,7 @@ type DaproviderServer struct {
 }
 
 type payloadResult struct {
-	Payload hexutil.Bytes `json:"payload,omitempty"`
+	Payload []byte `json:"payload,omitempty"`
 }
 
 type preimagesResult struct {
@@ -30,7 +30,7 @@ type preimagesResult struct {
 }
 
 type payloadAndPreimagesResult struct {
-	Payload   hexutil.Bytes           `json:"payload,omitempty"`
+	Payload   []byte                  `json:"payload,omitempty"`
 	Preimages daprovider.PreimagesMap `json:"preimages,omitempty"`
 }
 

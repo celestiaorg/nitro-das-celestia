@@ -17,15 +17,15 @@ const (
 // [1]      providerType (0x0c)
 // [2..3]   version (uint16)
 // [4..35]  dataRoot (bytes32)
-// [36..67] namespace (bytes32, right padded with zeros)
-// [68..75] height (uint64)
-// [76..79] shareStart (uint32)
-// [80..83] shareLen (uint32)
-// [84..115] txCommitment (bytes32)
+// [36..45] namespace (10 bytes)
+// [46..53] height (uint64)
+// [54..61] shareStart (uint64)
+// [62..69] shareLen (uint64)
+// [70..101] txCommitment (bytes32)
 // No proof bytes are embedded; proofs are supplied at verification time.
 type CelestiaDACertV1 struct {
 	DataRoot     [32]byte
-	Namespace    [32]byte
+	Namespace    [10]byte
 	Height       uint64
 	ShareStart   uint64
 	ShareLen     uint64
@@ -33,7 +33,7 @@ type CelestiaDACertV1 struct {
 }
 
 func Serialize(cert *CelestiaDACertV1) []byte {
-	buf := make([]byte, 0, 124)
+	buf := make([]byte, 0, 102)
 	buf = append(buf, CustomDAHeaderFlag)
 	buf = append(buf, CelestiaProviderTag)
 
@@ -60,7 +60,7 @@ func Serialize(cert *CelestiaDACertV1) []byte {
 }
 
 func Deserialize(data []byte) (*CelestiaDACertV1, error) {
-	if len(data) != 124 {
+	if len(data) != 102 {
 		return nil, errors.New("certificate too short")
 	}
 	if data[0] != CustomDAHeaderFlag {
@@ -76,11 +76,11 @@ func Deserialize(data []byte) (*CelestiaDACertV1, error) {
 
 	cert := &CelestiaDACertV1{}
 	copy(cert.DataRoot[:], data[4:36])
-	copy(cert.Namespace[:], data[36:68])
-	cert.Height = binary.BigEndian.Uint64(data[68:76])
-	cert.ShareStart = binary.BigEndian.Uint64(data[76:84])
-	cert.ShareLen = binary.BigEndian.Uint64(data[84:92])
-	copy(cert.TxCommitment[:], data[92:124])
+	copy(cert.Namespace[:], data[36:46])
+	cert.Height = binary.BigEndian.Uint64(data[46:54])
+	cert.ShareStart = binary.BigEndian.Uint64(data[54:62])
+	cert.ShareLen = binary.BigEndian.Uint64(data[62:70])
+	copy(cert.TxCommitment[:], data[70:102])
 
 	return cert, nil
 }

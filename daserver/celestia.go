@@ -3,7 +3,6 @@ package das
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	awskeyring "github.com/celestiaorg/aws-kms-keyring"
+	"github.com/celestiaorg/celestia-app/v6/pkg/appconsts"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -135,18 +135,6 @@ var (
 	ErrTxIncorrectAccountSequence = errors.New("incorrect account sequence")
 )
 
-// CelestiaMessageHeaderFlag indicates that this data is a Blob Pointer
-// which will be used to retrieve data from Celestia
-const CelestiaMessageHeaderFlag byte = 0x63
-
-func hasBits(checking byte, bits byte) bool {
-	return (checking & bits) == bits
-}
-
-func IsCelestiaMessageHeaderByte(header byte) bool {
-	return hasBits(header, CelestiaMessageHeaderFlag)
-}
-
 type CelestiaDA struct {
 	Cfg        *DAConfig
 	Client     *node.Client
@@ -156,6 +144,12 @@ type CelestiaDA struct {
 	Namespace *libshare.Namespace
 
 	messageCache sync.Map
+}
+
+func (c *CelestiaDA) MaxMessageSize(ctx context.Context) (int, error) {
+	// Celestia's max blob size is not exposed via ReadClient in v0.28.2.
+	// Use the default max blob size from the Celestia app constants.
+	return int(appconsts.DefaultMaxBytes), nil
 }
 
 func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
@@ -529,29 +523,28 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 		return nil, err
 	}
 
-	buf := new(bytes.Buffer)
-	err = binary.Write(buf, binary.BigEndian, CelestiaMessageHeaderFlag)
+	proof, err := c.GetProof(ctx, blobPointerData)
 	if err != nil {
 		celestiaFailureCounter.Inc(1)
-		log.Warn("batch type byte serialization failed", "err", err)
+		log.Warn("could not build Blobstream proof", "err", err)
 		return nil, err
 	}
 
-	err = binary.Write(buf, binary.BigEndian, blobPointerData)
+	celestiaCert, err := types.BuildCelestiaCertificate(blobPointer, c.Namespace.Bytes(), proof)
 	if err != nil {
 		celestiaFailureCounter.Inc(1)
-		log.Warn("blob pointer data serialization failed", "err", err)
+		log.Warn("certificate serialization failed", "err", err)
 		return nil, err
 	}
 
-	serializedBlobPointerData := buf.Bytes()
+	serializedCert := celestiaCert
 
-	c.messageCache.Store(msgHashHex, serializedBlobPointerData)
+	c.messageCache.Store(msgHashHex, serializedCert)
 
 	celestiaSuccessCounter.Inc(1)
 	celestiaDALastSuccesfulActionGauge.Update(time.Now().Unix())
 
-	return serializedBlobPointerData, nil
+	return serializedCert, nil
 }
 
 func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (*types.ReadResult, error) {

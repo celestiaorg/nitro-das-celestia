@@ -524,14 +524,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 		return nil, err
 	}
 
-	proof, err := c.GetProof(ctx, blobPointerData)
-	if err != nil {
-		celestiaFailureCounter.Inc(1)
-		log.Warn("could not build Blobstream proof", "err", err)
-		return nil, err
-	}
-
-	celestiaCert, err := types.BuildCelestiaCertificate(blobPointer, c.Namespace.Bytes(), proof)
+	celestiaCert, err := types.BuildCelestiaCertificate(blobPointer, c.Namespace.Bytes(), nil)
 	if err != nil {
 		celestiaFailureCounter.Inc(1)
 		log.Warn("certificate serialization failed", "err", err)

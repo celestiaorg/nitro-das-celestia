@@ -7,7 +7,7 @@ import (
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 )
 
-func BuildCelestiaCertificate(pointer BlobPointer, namespace []byte, proof []byte) ([]byte, error) {
+func BuildCelestiaCertificate(pointer BlobPointer, namespace []byte, _ []byte) ([]byte, error) {
 	if len(namespace) < share.NamespaceSize {
 		return nil, errors.New("namespace too short")
 	}
@@ -21,7 +21,6 @@ func BuildCelestiaCertificate(pointer BlobPointer, namespace []byte, proof []byt
 		ShareStart:   pointer.Start,
 		ShareLen:     pointer.SharesLength,
 		TxCommitment: pointer.TxCommitment,
-		Proof:        proof,
 	}
 	return cert.Serialize(certData), nil
 }

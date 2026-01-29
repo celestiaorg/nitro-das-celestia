@@ -18,8 +18,8 @@ func BuildCelestiaCertificate(pointer BlobPointer, namespace []byte, proof []byt
 		DataRoot:     pointer.DataRoot,
 		Namespace:    ns,
 		Height:       pointer.BlockHeight,
-		ShareStart:   uint32(pointer.Start),
-		ShareLen:     uint32(pointer.SharesLength),
+		ShareStart:   pointer.Start,
+		ShareLen:     pointer.SharesLength,
 		TxCommitment: pointer.TxCommitment,
 		Proof:        proof,
 	}

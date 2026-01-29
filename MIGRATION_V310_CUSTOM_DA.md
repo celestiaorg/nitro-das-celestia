@@ -56,8 +56,8 @@ CelestiaDACertV1 {
   bytes32 dataRoot                     // Celestia data root
   bytes32 namespace                    // Namespace ID
   uint64 height                        // Celestia block height
-  uint32 shareStart                    // Share range start
-  uint32 shareLen                      // Share range length
+  uint64 shareStart                    // Share range start
+  uint64 shareLen                      // Share range length
   bytes32 txCommitment                 // Celestia blob commitment
   bytes   blobstreamProof              // proof blobstream verifies
 }
@@ -198,8 +198,8 @@ node.da.anytrust.rpc-aggregator.backends = [...]
 
 ## 8) Devnet rollout plan
 
-1) Deploy Blobstream contract on devnet L1
-2) Deploy `CelestiaDAProofValidator`
+1) Deploy MockBlobstream on devnet L1 (or real BlobstreamX)
+2) Deploy `CelestiaDAProofValidator` with the Blobstream address
 3) Redeploy rollup with `customOsp` pointing to validator
 4) Run updated Celestia provider (`daprovider` API)
 5) Run Nitro node with `node.da.external-provider`

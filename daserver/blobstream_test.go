@@ -39,7 +39,9 @@ func setupNetworkTest(t *testing.T) (*CelestiaDA, string, func(), context.Contex
 
 	// Generate namespace ID
 	namespaceID := os.Getenv("NAMESPACE")
-	require.NotEmpty(t, namespaceID, "Namespace ID should not be empty")
+	if namespaceID == "" {
+		t.Skip("NAMESPACE not set")
+	}
 
 	// Create CelestiaDA instance connected to local node
 	cfg := &DAConfig{
@@ -96,6 +98,9 @@ func setupNetworkTest(t *testing.T) (*CelestiaDA, string, func(), context.Contex
 }
 
 func TestGetProofVerification(t *testing.T) {
+	if os.Getenv("NAMESPACE") == "" || os.Getenv("ETH_RPC") == "" || os.Getenv("BLOBSTREAM_ADDR") == "" {
+		t.Skip("NAMESPACE, ETH_RPC, and BLOBSTREAM_ADDR must be set")
+	}
 	celestiaDA, endpoint, cleanup, ctx := setupNetworkTest(t)
 	defer cleanup()
 

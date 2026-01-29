@@ -38,6 +38,7 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 		NamespaceId:      namespaceID,
 		AuthToken:        authToken,
 		CacheCleanupTime: time.Minute,
+		WithWriter:       true,
 		// Add validator config and other nec
 	}
 
@@ -75,7 +76,9 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 	cleanup := func() {
 		cancel()
 		server.Close()
-		celestiaDA.Stop()
+		if celestiaDA != nil {
+			celestiaDA.Stop()
+		}
 	}
 
 	return celestiaDA, endpoint, cleanup

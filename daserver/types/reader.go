@@ -171,10 +171,7 @@ func RecoverPayloadFromCelestiaBatch(
 		}
 	}
 
-	if len(parsed.Namespace) < libshare.NamespaceSize {
-		return nil, nil, errors.New("namespace too short")
-	}
-	namespace, err := libshare.NewV0Namespace(parsed.Namespace[:libshare.NamespaceSize])
+	namespace, err := libshare.NewV0Namespace(parsed.Namespace[:])
 	if err != nil {
 		return nil, nil, err
 	}

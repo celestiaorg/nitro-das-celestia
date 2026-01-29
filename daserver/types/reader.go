@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/celestiaorg/celestia-node/blob"
+	libshare "github.com/celestiaorg/go-square/v3/share"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -16,6 +19,9 @@ import (
 type Reader interface {
 	// IsValidHeaderByte returns true if the given headerByte has bits corresponding to the DA provider
 	IsValidHeaderByte(ctx context.Context, headerByte byte) bool
+
+	// HeaderByte returns the primary header byte for this provider
+	HeaderByte() byte
 
 	// RecoverPayloadFromBatch fetches the underlying payload and a map of preimages from the DA provider given the batch header information
 	RecoverPayloadFromBatch(
@@ -64,16 +70,12 @@ func (c *readerForCelestia) IsValidHeaderByte(ctx context.Context, headerByte by
 	return IsCelestiaMessageHeaderByte(headerByte)
 }
 
-// CelestiaMessageHeaderFlag indicates that this data is a Blob Pointer
-// which will be used to retrieve data from Celestia
-const CelestiaMessageHeaderFlag byte = 0x63
-
-func hasBits(checking byte, bits byte) bool {
-	return (checking & bits) == bits
+func (c *readerForCelestia) HeaderByte() byte {
+	return cert.CustomDAHeaderFlag
 }
 
 func IsCelestiaMessageHeaderByte(header byte) bool {
-	return hasBits(header, CelestiaMessageHeaderFlag)
+	return header == cert.CustomDAHeaderFlag
 }
 
 func (c *readerForCelestia) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
@@ -103,23 +105,24 @@ func RecoverPayloadFromCelestiaBatch(
 	if preimages != nil {
 		preimageRecorder = RecordPreimagesTo(preimages)
 	}
-	buf := bytes.NewBuffer(sequencerMsg[40:])
-
-	header, err := buf.ReadByte()
-	if err != nil {
-		log.Error("Couldn't deserialize Celestia header byte", "err", err)
-		return nil, nil, errors.New("tried to deserialize a message that doesn't have the Celestia header")
+	certBytes := sequencerMsg[40:]
+	if len(certBytes) == 0 {
+		return nil, nil, errors.New("sequencer message missing certificate")
 	}
-	if !IsCelestiaMessageHeaderByte(header) {
-		log.Error("Couldn't deserialize Celestia header byte", "err", errors.New("tried to deserialize a message that doesn't have the Celestia header"))
-		return nil, nil, errors.New("tried to deserialize a message that doesn't have the Celestia header")
+	if !IsCelestiaMessageHeaderByte(certBytes[0]) {
+		return nil, nil, errors.New("invalid certificate header byte")
 	}
-
-	blobPointer := BlobPointer{}
-	blobBytes := buf.Bytes()
-	err = blobPointer.UnmarshalBinary(blobBytes)
+	parsed, err := cert.Deserialize(certBytes)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	blobPointer := BlobPointer{
+		BlockHeight:  parsed.Height,
+		Start:        uint64(parsed.ShareStart),
+		SharesLength: uint64(parsed.ShareLen),
+		TxCommitment: parsed.TxCommitment,
+		DataRoot:     parsed.DataRoot,
 	}
 
 	result, err := celestiaReader.Read(ctx, &blobPointer)
@@ -166,6 +169,21 @@ func RecoverPayloadFromCelestiaBatch(
 			log.Error("Data Root do not match", "blobPointer data root", blobPointer.DataRoot, "calculated", dataRoot)
 			return nil, nil, errors.New("data roots do not match")
 		}
+	}
+
+	if len(parsed.Namespace) < libshare.NamespaceSize {
+		return nil, nil, errors.New("namespace too short")
+	}
+	namespace, err := libshare.NewV0Namespace(parsed.Namespace[:libshare.NamespaceSize])
+	if err != nil {
+		return nil, nil, err
+	}
+	computedBlob, err := blob.NewBlobV0(namespace, result.Message)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !bytes.Equal(computedBlob.Commitment, parsed.TxCommitment[:]) {
+		return nil, nil, errors.New("txCommitment mismatch")
 	}
 
 	return result.Message, preimages, nil

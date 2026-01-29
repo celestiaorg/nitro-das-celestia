@@ -101,7 +101,7 @@ func TestCelestiaIntegration(t *testing.T) {
 		require.NotNil(t, storedBytes)
 
 		// Check header flag
-		require.Equal(t, CelestiaMessageHeaderFlag, storedBytes[0])
+		require.Equal(t, byte(0x01), storedBytes[0])
 
 		// Parse blob pointer
 		var blobPointer types.BlobPointer

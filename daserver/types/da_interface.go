@@ -6,6 +6,7 @@ import (
 
 type CelestiaWriter interface {
 	Store(context.Context, []byte) ([]byte, error)
+	MaxMessageSize(context.Context) (int, error)
 }
 
 type ReadResult struct {

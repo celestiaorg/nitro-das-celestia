@@ -10,12 +10,11 @@ import (
 	"time"
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
-	"github.com/ethereum/go-ethereum/common"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/validator"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
-	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/offchainlabs/nitro/util/pretty"
 
 	"github.com/offchainlabs/nitro/daprovider/daclient"
@@ -42,13 +41,6 @@ var (
 	rpcProofBytesGauge        = metrics.NewRegisteredGauge("celestia/das/rpc/proof/bytes", nil)
 	rpcProofDurationHistogram = metrics.NewRegisteredHistogram("celestia/das/rpc/proof/duration", nil, metrics.NewExpDecaySample(1024, 0.015))
 )
-
-type DaClientServer struct {
-	reader    types.Reader
-	writer    types.Writer
-	dasClient *daclient.Client
-	fallback  bool
-}
 
 type CelestiaDASRPCServer struct {
 	celestiaReader types.CelestiaReader
@@ -80,12 +72,14 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 		return nil, err
 	}
 
-	server := &DaClientServer{
-		reader:    types.NewReaderForCelestia(celestiaReader),
-		writer:    types.NewWriterForCelestia(celestiaWriter),
-		dasClient: dasClient,
-		fallback:  fallbackEnabled,
-	}
+	celestiaValidator := validator.NewCelestiaValidator()
+	server := NewDaproviderServer(
+		types.NewReaderForCelestia(celestiaReader),
+		types.NewWriterForCelestia(celestiaWriter),
+		celestiaValidator,
+		dasClient,
+		fallbackEnabled,
+	)
 
 	err = rpcServer.RegisterName("daprovider", server)
 
@@ -187,100 +181,4 @@ func (serv *CelestiaDASRPCServer) GetProof(ctx context.Context, msg []byte) ([]b
 	rpcProofBytesGauge.Inc(int64(len(proof)))
 	success = true
 	return proof, nil
-}
-
-func (serv *DaClientServer) RecoverPayloadFromBatch(
-	ctx context.Context,
-	batchNum hexutil.Uint64,
-	batchBlockHash common.Hash,
-	sequencerMsg hexutil.Bytes,
-	preimages daprovider.PreimagesMap,
-	validateSeqMsg bool,
-) (*types.RecoverPayloadFromBatchResult, error) {
-	log.Info("CelestiaDASRPCServer.RecoverPayloadFromBatch",
-		"batchNum", batchNum,
-		"batchBlockHash", batchBlockHash,
-		"sequencerMsg", sequencerMsg,
-	)
-	// check the header byte before sending out the call
-	headerByte := sequencerMsg[40]
-	if IsCelestiaMessageHeaderByte(headerByte) {
-		log.Info("CelestiaDASRPCServer.RecoverPayloadFromBatch", "celestiaHeaderByte", headerByte)
-		payload, preimages, err := serv.reader.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
-		if err != nil {
-			log.Error("failed to recover payload from Celestia batch",
-				"batchNum", batchNum,
-				"batchBlockHash", batchBlockHash,
-				"sequencerMsg", sequencerMsg,
-				"validateSeqMsg", validateSeqMsg,
-				"err", err)
-			return nil, err
-		}
-		log.Info("Recovered Payload from Celestia batch", "len(payload)", len(payload), "len(preimages)", len(preimages))
-		return &types.RecoverPayloadFromBatchResult{
-			Payload:   payload,
-			Preimages: preimages,
-		}, nil
-	} else if daprovider.IsDASMessageHeaderByte(headerByte) {
-		log.Info("CelestiaDASRPCServer.RecoverPayloadFromBatch", "dasHeaderByte", headerByte)
-		if serv.dasClient == nil {
-			return nil, fmt.Errorf("found DAS Message header Byte, but das client for fallback not enabled on server")
-		}
-		payload, preimages, err := serv.dasClient.RecoverPayloadFromBatch(ctx, uint64(batchNum), batchBlockHash, sequencerMsg, preimages, validateSeqMsg)
-		if err != nil {
-			log.Error("failed to recover payload from DAS batch",
-				"batchNum", batchNum,
-				"batchBlockHash", batchBlockHash,
-				"sequencerMsg", sequencerMsg,
-				"validateSeqMsg", validateSeqMsg,
-				"err", err)
-			return nil, err
-		}
-		log.Info("Recovered Payload from DAS batch", "len(payload)", len(payload), "len(preimages)", len(preimages))
-		return &types.RecoverPayloadFromBatchResult{
-			Payload:   payload,
-			Preimages: preimages,
-		}, nil
-	}
-
-	return nil, errors.New("unknown batch header byte")
-}
-
-func (serv *DaClientServer) IsValidHeaderByte(ctx context.Context, headerByte byte) (*types.IsValidHeaderByteResult, error) {
-	log.Info("Checking valid header byte", "headerByte", headerByte)
-	valid := false
-	if serv.reader != nil {
-		valid = serv.reader.IsValidHeaderByte(ctx, headerByte)
-		log.Info("Got response from CelestiaServer", "headerByteValid", valid)
-	}
-
-	if serv.fallback && serv.dasClient != nil && !valid {
-		valid = serv.dasClient.IsValidHeaderByte(ctx, headerByte)
-		log.Info("Got response from DasServer", "headerByteValid", valid)
-	}
-	log.Info("Header byte validity", "valid", valid)
-	return &types.IsValidHeaderByteResult{IsValid: valid}, nil
-}
-
-func (serv *DaClientServer) Store(
-	ctx context.Context,
-	message hexutil.Bytes,
-	timeout hexutil.Uint64,
-	disableFallbackStoreDataOnChain bool,
-) (*types.StoreResult, error) {
-	result, err := serv.writer.Store(ctx, message, uint64(timeout), disableFallbackStoreDataOnChain)
-	if err != nil {
-		// fallback to das
-		if serv.fallback && serv.dasClient != nil {
-			log.Info("Falling back to write data to Anytrust DAS")
-			result, err = serv.dasClient.Store(ctx, message, uint64(timeout), disableFallbackStoreDataOnChain)
-			if err != nil {
-				return nil, err
-			}
-			log.Info("Succesfully wrote data to anytrust daprovider", "result", result)
-		} else {
-			return nil, err
-		}
-	}
-	return &types.StoreResult{SerializedResult: result}, nil
 }

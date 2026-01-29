@@ -3,8 +3,6 @@ package types
 import (
 	"context"
 	"errors"
-
-	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 type Writer interface {
@@ -14,8 +12,10 @@ type Writer interface {
 		ctx context.Context,
 		message []byte,
 		timeout uint64,
-		disableFallbackStoreDataOnChain bool,
 	) ([]byte, error)
+
+	// GetMaxMessageSize returns the maximum message size the writer can accept.
+	GetMaxMessageSize(ctx context.Context) (int, error)
 }
 
 func NewWriterForCelestia(celestiaWriter CelestiaWriter) *writerForCelestia {
@@ -26,20 +26,21 @@ type writerForCelestia struct {
 	celestiaWriter CelestiaWriter
 }
 
-type StoreResult struct {
-	SerializedResult hexutil.Bytes `json:"serialized-da-cert,omitempty"`
-}
-
-func (c *writerForCelestia) Store(ctx context.Context, message []byte, timeout uint64, disableFallbackStoreDataOnChain bool) ([]byte, error) {
+func (c *writerForCelestia) Store(ctx context.Context, message []byte, timeout uint64) ([]byte, error) {
 	msg, err := c.celestiaWriter.Store(ctx, message)
 	if err != nil {
-		if disableFallbackStoreDataOnChain {
-			return nil, errors.New("unable to batch to Celestia and fallback storing data on chain is disabled")
-		}
 		return nil, err
 	}
-	message = msg
-	return message, nil
+	return msg, nil
+}
+
+func (c *writerForCelestia) GetMaxMessageSize(ctx context.Context) (int, error) {
+	if maxer, ok := c.celestiaWriter.(interface {
+		MaxMessageSize(context.Context) (int, error)
+	}); ok {
+		return maxer.MaxMessageSize(ctx)
+	}
+	return 0, errors.New("max message size not supported")
 }
 
 func (d *writerForCelestia) Type() string {

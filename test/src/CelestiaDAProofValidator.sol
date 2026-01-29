@@ -26,7 +26,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         bytes calldata certificate = proof[CERT_SIZE_LEN:CERT_SIZE_LEN + certSize];
 
         require(keccak256(certificate) == certHash, "Certificate hash mismatch");
-        require(certificate.length == 124, "Invalid certificate length");
+        require(certificate.length == 102, "Invalid certificate length");
         require(certificate[0] == bytes1(uint8(CERT_HEADER)), "Invalid certificate header");
         require(certificate[1] == bytes1(uint8(PROVIDER_TYPE)), "Invalid provider type");
 
@@ -51,7 +51,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         );
 
         bytes calldata certificate = proof[CERT_SIZE_LEN:CERT_SIZE_LEN + certSize];
-        if (certificate.length != 124) {
+        if (certificate.length != 102) {
             return false;
         }
         if (certificate[0] != bytes1(uint8(CERT_HEADER))) {

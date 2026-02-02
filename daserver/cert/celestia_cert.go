@@ -1,6 +1,7 @@
 package cert
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 )
@@ -16,71 +17,84 @@ const (
 // [0]      header (0x01)
 // [1]      providerType (0x0c)
 // [2..3]   version (uint16)
-// [4..35]  dataRoot (bytes32)
-// [36..45] namespace (10 bytes)
-// [46..53] height (uint64)
-// [54..61] shareStart (uint64)
-// [62..69] shareLen (uint64)
-// [70..101] txCommitment (bytes32)
+// [4..11]  blockHeight (uint64)
+// [12..19] start (uint64)
+// [20..27] sharesLength (uint64)
+// [28..59] txCommitment (bytes32)
+// [60..91] dataRoot (bytes32)
 // No proof bytes are embedded; proofs are supplied at verification time.
 type CelestiaDACertV1 struct {
-	DataRoot     [32]byte
-	Namespace    [10]byte
-	Height       uint64
-	ShareStart   uint64
-	ShareLen     uint64
+	BlockHeight  uint64
+	Start        uint64
+	SharesLength uint64
 	TxCommitment [32]byte
+	DataRoot     [32]byte
 }
 
-func Serialize(cert *CelestiaDACertV1) []byte {
-	buf := make([]byte, 0, 102)
-	buf = append(buf, CustomDAHeaderFlag)
-	buf = append(buf, CelestiaProviderTag)
+func (c *CelestiaDACertV1) MarshalBinary() ([]byte, error) {
+	buf := new(bytes.Buffer)
 
-	version := make([]byte, 2)
-	binary.BigEndian.PutUint16(version, CelestiaCertVersion)
-	buf = append(buf, version...)
+	buf.WriteByte(CustomDAHeaderFlag)
+	buf.WriteByte(CelestiaProviderTag)
 
-	buf = append(buf, cert.DataRoot[:]...)
-	buf = append(buf, cert.Namespace[:]...)
+	if err := binary.Write(buf, binary.BigEndian, CelestiaCertVersion); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(buf, binary.BigEndian, c.BlockHeight); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(buf, binary.BigEndian, c.Start); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(buf, binary.BigEndian, c.SharesLength); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write(c.TxCommitment[:]); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write(c.DataRoot[:]); err != nil {
+		return nil, err
+	}
 
-	field := make([]byte, 8)
-	binary.BigEndian.PutUint64(field, cert.Height)
-	buf = append(buf, field...)
-
-	field = make([]byte, 8)
-	binary.BigEndian.PutUint64(field, cert.ShareStart)
-	buf = append(buf, field...)
-	binary.BigEndian.PutUint64(field, cert.ShareLen)
-	buf = append(buf, field...)
-
-	buf = append(buf, cert.TxCommitment[:]...)
-
-	return buf
+	return buf.Bytes(), nil
 }
 
-func Deserialize(data []byte) (*CelestiaDACertV1, error) {
-	if len(data) != 102 {
-		return nil, errors.New("certificate too short")
+func (c *CelestiaDACertV1) UnmarshalBinary(data []byte) error {
+	if len(data) != 92 {
+		return errors.New("certificate has invalid length")
 	}
 	if data[0] != CustomDAHeaderFlag {
-		return nil, errors.New("invalid certificate header")
+		return errors.New("invalid certificate header")
 	}
 	if data[1] != CelestiaProviderTag {
-		return nil, errors.New("invalid provider type")
+		return errors.New("invalid provider type")
 	}
-	version := binary.BigEndian.Uint16(data[2:4])
+
+	buf := bytes.NewReader(data[2:])
+
+	var version uint16
+	if err := binary.Read(buf, binary.BigEndian, &version); err != nil {
+		return err
+	}
 	if version != CelestiaCertVersion {
-		return nil, errors.New("unsupported certificate version")
+		return errors.New("unsupported certificate version")
 	}
 
-	cert := &CelestiaDACertV1{}
-	copy(cert.DataRoot[:], data[4:36])
-	copy(cert.Namespace[:], data[36:46])
-	cert.Height = binary.BigEndian.Uint64(data[46:54])
-	cert.ShareStart = binary.BigEndian.Uint64(data[54:62])
-	cert.ShareLen = binary.BigEndian.Uint64(data[62:70])
-	copy(cert.TxCommitment[:], data[70:102])
+	if err := binary.Read(buf, binary.BigEndian, &c.BlockHeight); err != nil {
+		return err
+	}
+	if err := binary.Read(buf, binary.BigEndian, &c.Start); err != nil {
+		return err
+	}
+	if err := binary.Read(buf, binary.BigEndian, &c.SharesLength); err != nil {
+		return err
+	}
+	if _, err := buf.Read(c.TxCommitment[:]); err != nil {
+		return err
+	}
+	if _, err := buf.Read(c.DataRoot[:]); err != nil {
+		return err
+	}
 
-	return cert, nil
+	return nil
 }

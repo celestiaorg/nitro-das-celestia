@@ -700,6 +700,10 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (
 	}, nil
 }
 
+func (c *CelestiaDA) GetNamespace() *libshare.Namespace {
+	return c.Namespace
+}
+
 func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	if c.Cfg.ValidatorConfig.EthClient == "" || c.Cfg.ValidatorConfig.BlobstreamAddr == "" {
 		celestiaValidationFailureCounter.Inc(1)

@@ -24,8 +24,8 @@ type ValidityProofResult struct {
 }
 
 func (v *CelestiaValidator) GenerateReadPreimageProof(offset uint64, certificate []byte) containers.PromiseInterface[PreimageProofResult] {
-	_, err := cert.Deserialize(certificate)
-	if err != nil {
+	parsed := &cert.CelestiaDACertV1{}
+	if err := parsed.UnmarshalBinary(certificate); err != nil {
 		return containers.NewReadyPromise(PreimageProofResult{}, err)
 	}
 	if offset != 0 {
@@ -35,8 +35,8 @@ func (v *CelestiaValidator) GenerateReadPreimageProof(offset uint64, certificate
 }
 
 func (v *CelestiaValidator) GenerateCertificateValidityProof(certificate []byte) containers.PromiseInterface[ValidityProofResult] {
-	_, err := cert.Deserialize(certificate)
-	if err != nil {
+	parsed := &cert.CelestiaDACertV1{}
+	if err := parsed.UnmarshalBinary(certificate); err != nil {
 		return containers.NewReadyPromise(ValidityProofResult{}, err)
 	}
 	return containers.NewReadyPromise(ValidityProofResult{Proof: nil}, nil)

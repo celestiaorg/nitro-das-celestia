@@ -74,12 +74,15 @@ func (c *readerForCelestia) RecoverPayloadFromBatch(
 	preimages daprovider.PreimagesMap,
 	_ bool,
 ) ([]byte, daprovider.PreimagesMap, error) {
+	if len(sequencerMsg) < cert.SequencerMsgOffset+cert.CelestiaDACertV1Len {
+		return nil, nil, errors.New("sequencer message too short")
+	}
 	var preimageRecorder daprovider.PreimageRecorder
 	if preimages != nil {
 		preimageRecorder = RecordPreimagesTo(preimages)
 	}
 	parsed := &cert.CelestiaDACertV1{}
-	if err := parsed.UnmarshalBinary(sequencerMsg[40:]); err != nil {
+	if err := parsed.UnmarshalBinary(sequencerMsg[cert.SequencerMsgOffset:]); err != nil {
 		return nil, nil, err
 	}
 
@@ -97,9 +100,8 @@ func (c *readerForCelestia) RecoverPayloadFromBatch(
 		return nil, nil, err
 	}
 
-	// we read a batch that is to be discarded, so we return the empty batch
 	if len(result.Message) == 0 {
-		return nil, nil, errors.New("tried to deserialize a message that doesn't have the Celestia header")
+		return nil, nil, errors.New("empty payload returned from Celestia")
 	}
 
 	if preimageRecorder != nil {
@@ -114,13 +116,11 @@ func (c *readerForCelestia) RecoverPayloadFromBatch(
 				return nil, nil, err
 			}
 
-			rowRootMatches := bytes.Equal(result.RowRoots[rowIndex], root)
-			if !rowRootMatches {
-				log.Error("Row roots do not match", "eds row root", result.RowRoots[rowIndex], "calculated", root)
-				log.Error("Row roots", "row_roots", result.RowRoots)
-				return nil, nil, err
+			if !bytes.Equal(result.RowRoots[rowIndex], root) {
+				log.Error("Row root mismatch", "rowIndex", rowIndex)
+				return nil, nil, errors.New("row root mismatch")
 			}
-			rowIndex += 1
+			rowIndex++
 		}
 
 		rowsCount := len(result.RowRoots)

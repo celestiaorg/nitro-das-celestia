@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"github.com/celestiaorg/celestia-node/blob"
-	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
 	"github.com/ethereum/go-ethereum/common"
@@ -112,15 +111,15 @@ func RecoverPayloadFromCelestiaBatch(
 	if !IsCelestiaMessageHeaderByte(certBytes[0]) {
 		return nil, nil, errors.New("invalid certificate header byte")
 	}
-	parsed, err := cert.Deserialize(certBytes)
-	if err != nil {
+	parsed := &cert.CelestiaDACertV1{}
+	if err := parsed.UnmarshalBinary(certBytes); err != nil {
 		return nil, nil, err
 	}
 
 	blobPointer := BlobPointer{
-		BlockHeight:  parsed.Height,
-		Start:        parsed.ShareStart,
-		SharesLength: parsed.ShareLen,
+		BlockHeight:  parsed.BlockHeight,
+		Start:        parsed.Start,
+		SharesLength: parsed.SharesLength,
 		TxCommitment: parsed.TxCommitment,
 		DataRoot:     parsed.DataRoot,
 	}
@@ -171,11 +170,11 @@ func RecoverPayloadFromCelestiaBatch(
 		}
 	}
 
-	namespace, err := libshare.NewV0Namespace(parsed.Namespace[:])
-	if err != nil {
-		return nil, nil, err
+	namespace := celestiaReader.GetNamespace()
+	if namespace == nil {
+		return nil, nil, errors.New("namespace not configured")
 	}
-	computedBlob, err := blob.NewBlobV0(namespace, result.Message)
+	computedBlob, err := blob.NewBlobV0(*namespace, result.Message)
 	if err != nil {
 		return nil, nil, err
 	}

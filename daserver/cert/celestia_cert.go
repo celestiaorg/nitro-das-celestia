@@ -7,9 +7,11 @@ import (
 )
 
 const (
-	CustomDAHeaderFlag  byte   = 0x01
-	CelestiaProviderTag byte   = 0x0c
-	CelestiaCertVersion uint16 = 1
+	CustomDAHeaderFlag    byte   = 0x01
+	CelestiaProviderTag   byte   = 0x0c
+	CelestiaCertVersion   uint16 = 1
+	CelestiaDACertV1Len   int    = 92
+	SequencerMsgOffset    int    = 40
 )
 
 // CelestiaDACertV1 is the Custom DA certificate format for Celestia.
@@ -60,7 +62,7 @@ func (c *CelestiaDACertV1) MarshalBinary() ([]byte, error) {
 }
 
 func (c *CelestiaDACertV1) UnmarshalBinary(data []byte) error {
-	if len(data) != 92 {
+	if len(data) != CelestiaDACertV1Len {
 		return errors.New("certificate has invalid length")
 	}
 	if data[0] != CustomDAHeaderFlag {

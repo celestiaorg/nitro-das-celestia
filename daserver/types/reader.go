@@ -11,21 +11,24 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/offchainlabs/nitro/arbutil"
 	"github.com/offchainlabs/nitro/daprovider"
+	"github.com/offchainlabs/nitro/util/containers"
 )
 
 type Reader interface {
-	// IsValidHeaderByte returns true if the given headerByte has bits corresponding to the DA provider
-	IsValidHeaderByte(ctx context.Context, headerByte byte) bool
-
-	// RecoverPayloadFromBatch fetches the underlying payload and a map of preimages from the DA provider given the batch header information
-	RecoverPayloadFromBatch(
-		ctx context.Context,
+	// NOTICE: The below are DA API methods for v3.8.0 and above
+	// RecoverPayload fetches the underlying payload from the DA provider given the batch header information
+	RecoverPayload(
 		batchNum uint64,
 		batchBlockHash common.Hash,
 		sequencerMsg []byte,
-		preimages daprovider.PreimagesMap,
-		validateSeqMsg bool,
-	) ([]byte, daprovider.PreimagesMap, error)
+	) containers.PromiseInterface[daprovider.PayloadResult]
+
+	// CollectPreimages collects preimages from the DA provider given the batch header information
+	CollectPreimages(
+		batchNum uint64,
+		batchBlockHash common.Hash,
+		sequencerMsg []byte,
+	) containers.PromiseInterface[daprovider.PreimagesResult]
 }
 
 // RecordPreimagesTo takes in preimages map and returns a function that can be used
@@ -80,15 +83,33 @@ func (c *readerForCelestia) GetProof(ctx context.Context, msg []byte) ([]byte, e
 	return c.celestiaReader.GetProof(ctx, msg)
 }
 
-func (c *readerForCelestia) RecoverPayloadFromBatch(
-	ctx context.Context,
+func (c *readerForCelestia) RecoverPayload(
 	batchNum uint64,
 	batchBlockHash common.Hash,
 	sequencerMsg []byte,
-	preimages daprovider.PreimagesMap,
-	validateSeqMsg bool,
-) ([]byte, daprovider.PreimagesMap, error) {
-	return RecoverPayloadFromCelestiaBatch(ctx, batchNum, sequencerMsg, c.celestiaReader, preimages, validateSeqMsg)
+) containers.PromiseInterface[daprovider.PayloadResult] {
+	promise, ctx := containers.NewPromiseWithContext[daprovider.PayloadResult](context.Background())
+	go func() {
+		payload, _, err := RecoverPayloadFromCelestiaBatch(ctx, batchNum, sequencerMsg, c.celestiaReader, false)
+		if err != nil {
+			promise.ProduceError(err)
+		} else {
+			promise.Produce(daprovider.PayloadResult{Payload: payload})
+		}
+	}()
+	return promise
+}
+
+// CollectPreimages collects preimages from the DA provider given the batch header information
+func (c *readerForCelestia) CollectPreimages(
+	batchNum uint64,
+	batchBlockHash common.Hash,
+	sequencerMsg []byte,
+) containers.PromiseInterface[daprovider.PreimagesResult] {
+	return containers.DoPromise(context.Background(), func(ctx context.Context) (daprovider.PreimagesResult, error) {
+		_, preimages, err := RecoverPayloadFromCelestiaBatch(ctx, batchNum, sequencerMsg, c.celestiaReader, true)
+		return daprovider.PreimagesResult{Preimages: preimages}, err
+	})
 }
 
 func RecoverPayloadFromCelestiaBatch(
@@ -96,12 +117,13 @@ func RecoverPayloadFromCelestiaBatch(
 	batchNum uint64,
 	sequencerMsg []byte,
 	celestiaReader CelestiaReader,
-	preimages daprovider.PreimagesMap,
-	validateSeqMsg bool,
+	needPreimages bool,
 ) ([]byte, daprovider.PreimagesMap, error) {
+	var preimages daprovider.PreimagesMap
 	var preimageRecorder daprovider.PreimageRecorder
-	if preimages != nil {
-		preimageRecorder = RecordPreimagesTo(preimages)
+	if needPreimages {
+		preimages = make(daprovider.PreimagesMap)
+		preimageRecorder = daprovider.RecordPreimagesTo(preimages)
 	}
 	buf := bytes.NewBuffer(sequencerMsg[40:])
 

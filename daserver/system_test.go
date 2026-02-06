@@ -65,8 +65,6 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 		1024*1024*2, // 2MB body limit
 		celestiaDA,
 		celestiaDA,
-		nil,
-		false,
 	)
 	require.NoError(t, err)
 

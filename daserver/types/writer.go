@@ -2,12 +2,12 @@ package types
 
 import (
 	"context"
-	"errors"
 
-	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/offchainlabs/nitro/util/containers"
 )
 
-type Writer interface {
+type OldWriter interface {
 	// Store posts the batch data to the invoking DA provider
 	// And returns sequencerMsg which is later used to retrieve the batch data
 	Store(
@@ -18,6 +18,16 @@ type Writer interface {
 	) ([]byte, error)
 }
 
+// New Writer interface from v3.8.0
+type Writer interface {
+	// Store posts the batch data to the invoking DA provider
+	// And returns sequencerMsg which is later used to retrieve the batch data
+	Store(
+		message []byte,
+		timeout uint64,
+	) containers.PromiseInterface[[]byte]
+}
+
 func NewWriterForCelestia(celestiaWriter CelestiaWriter) *writerForCelestia {
 	return &writerForCelestia{celestiaWriter: celestiaWriter}
 }
@@ -26,20 +36,19 @@ type writerForCelestia struct {
 	celestiaWriter CelestiaWriter
 }
 
-type StoreResult struct {
-	SerializedResult hexutil.Bytes `json:"serialized-da-cert,omitempty"`
-}
-
-func (c *writerForCelestia) Store(ctx context.Context, message []byte, timeout uint64, disableFallbackStoreDataOnChain bool) ([]byte, error) {
-	msg, err := c.celestiaWriter.Store(ctx, message)
-	if err != nil {
-		if disableFallbackStoreDataOnChain {
-			return nil, errors.New("unable to batch to Celestia and fallback storing data on chain is disabled")
+// DA Provider Store method from Nitro v3.8.0
+func (c *writerForCelestia) Store(
+	message []byte,
+	timeout uint64,
+) containers.PromiseInterface[[]byte] {
+	return containers.DoPromise(context.Background(), func(ctx context.Context) ([]byte, error) {
+		cert, err := c.celestiaWriter.Store(context.Background(), message)
+		if err != nil {
+			log.Error("Returning error from Celestia writer", "err", err)
+			return nil, err
 		}
-		return nil, err
-	}
-	message = msg
-	return message, nil
+		return cert, nil
+	})
 }
 
 func (d *writerForCelestia) Type() string {

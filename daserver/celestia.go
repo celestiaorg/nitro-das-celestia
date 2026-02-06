@@ -180,7 +180,6 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.String(prefix+".validator-config"+".eth-rpc", "", "Parent chain connection, only used for validation")
 	f.String(prefix+".validator-config"+".blobstream", "", "Blobstream address, only used for validation")
 	f.Int(prefix+".validator-config"+".sleep-time", 3600, "How many seconds to wait before initiating another filtering loop for Blobstream events")
-	f.Bool(prefix+".dangerous-reorg-on-read-failure", false, "DANGEROUS: reorg if any error during reads from celestia node")
 	f.Duration(prefix+".cache-time", time.Hour/2, "how often to clean the in memory cache")
 	CelestiaRetryConfigAddOptions(prefix+".retry-config", f)
 	CelestiaAWSKMSConfigAddOptions(prefix+".aws-kms-config", f)
@@ -391,7 +390,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	}
 
 	if !c.Cfg.WithWriter {
-		log.Warn("Attempted to call Store() without writer enabled", "cfg.withWriter", c.Cfg.WithWriter)
+		log.Warn("Attempted to call Store() without writer enabled", "cfg.with-writer", c.Cfg.WithWriter)
 		return nil, errors.New("writer not enabled")
 	}
 
@@ -445,7 +444,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 				continue
 			default:
 				celestiaFailureCounter.Inc(1)
-				log.Warn("Blob Submission error", "err", err)
+				log.Error("Blob Submission error", "err", err)
 				return nil, err
 			}
 		}

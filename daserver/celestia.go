@@ -23,6 +23,7 @@ import (
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/celestiaorg/rsmt2d"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
@@ -516,7 +517,13 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	}
 	log.Info("Posted blob to height and dataRoot", "height", blobPointer.BlockHeight, "dataRoot", hex.EncodeToString(blobPointer.DataRoot[:]))
 
-	celestiaCert, err := types.BuildCelestiaCertificate(blobPointer, c.Namespace.Bytes(), nil)
+	celestiaCert, err := cert.NewCelestiaCertificate(
+		blobPointer.BlockHeight,
+		blobPointer.Start,
+		blobPointer.SharesLength,
+		blobPointer.TxCommitment,
+		blobPointer.DataRoot,
+	).MarshalBinary()
 	if err != nil {
 		celestiaFailureCounter.Inc(1)
 		log.Warn("certificate serialization failed", "err", err)

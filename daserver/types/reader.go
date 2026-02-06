@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 
-	"github.com/celestiaorg/celestia-node/blob"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
 	"github.com/ethereum/go-ethereum/common"
@@ -108,17 +108,18 @@ func RecoverPayloadFromCelestiaBatch(
 		preimages = make(daprovider.PreimagesMap)
 		preimageRecorder = daprovider.RecordPreimagesTo(preimages)
 	}
-	parsed := &cert.CelestiaDACertV1{}
-	if err := parsed.UnmarshalBinary(sequencerMsg[cert.SequencerMsgOffset:]); err != nil {
+
+	certificate := &cert.CelestiaDACertV1{}
+	if err := certificate.UnmarshalBinary(sequencerMsg[cert.SequencerMsgOffset:]); err != nil {
 		return nil, nil, err
 	}
 
 	blobPointer := BlobPointer{
-		BlockHeight:  parsed.BlockHeight,
-		Start:        parsed.Start,
-		SharesLength: parsed.SharesLength,
-		TxCommitment: parsed.TxCommitment,
-		DataRoot:     parsed.DataRoot,
+		BlockHeight:  certificate.BlockHeight,
+		Start:        certificate.Start,
+		SharesLength: certificate.SharesLength,
+		TxCommitment: certificate.TxCommitment,
+		DataRoot:     certificate.DataRoot,
 	}
 
 	result, err := c.celestiaReader.Read(ctx, &blobPointer)
@@ -162,18 +163,6 @@ func RecoverPayloadFromCelestiaBatch(
 			log.Error("Data Root do not match", "blobPointer data root", blobPointer.DataRoot, "calculated", dataRoot)
 			return nil, nil, errors.New("data roots do not match")
 		}
-	}
-
-	namespace := c.celestiaReader.GetNamespace()
-	if namespace == nil {
-		return nil, nil, errors.New("namespace not configured")
-	}
-	computedBlob, err := blob.NewBlobV0(*namespace, result.Message)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !bytes.Equal(computedBlob.Commitment, parsed.TxCommitment[:]) {
-		return nil, nil, errors.New("txCommitment mismatch")
 	}
 
 	return result.Message, preimages, nil

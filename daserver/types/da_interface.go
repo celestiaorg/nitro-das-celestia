@@ -2,8 +2,6 @@ package types
 
 import (
 	"context"
-
-	libshare "github.com/celestiaorg/go-square/v3/share"
 )
 
 type CelestiaWriter interface {
@@ -24,5 +22,4 @@ type ReadResult struct {
 type CelestiaReader interface {
 	Read(ctx context.Context, blobPointer *BlobPointer) (*ReadResult, error)
 	GetProof(ctx context.Context, msg []byte) ([]byte, error)
-	GetNamespace() *libshare.Namespace
 }

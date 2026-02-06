@@ -51,14 +51,14 @@ func TestCelestiaDACertV1_GoldenEncoding(t *testing.T) {
 	if data[0] != CustomDAHeaderFlag {
 		t.Errorf("header byte: got 0x%02x, want 0x%02x", data[0], CustomDAHeaderFlag)
 	}
-	if data[1] != CelestiaProviderTag {
-		t.Errorf("provider tag: got 0x%02x, want 0x%02x", data[1], CelestiaProviderTag)
+	if data[1] != CelestiaMessageHeaderFlag {
+		t.Errorf("provider tag: got 0x%02x, want 0x%02x", data[1], CelestiaMessageHeaderFlag)
 	}
 
 	// Verify exact encoding for known values
 	got := hex.EncodeToString(data)
-	// header(01) + provider(0c) + version(0001) + height(1) + start(2) + len(3) + commitment(32 zeros) + dataroot(32 zeros)
-	want := "010c0001" + "0000000000000001" + "0000000000000002" + "0000000000000003" +
+	// header(01) + provider(63) + version(0001) + height(1) + start(2) + len(3) + commitment(32 zeros) + dataroot(32 zeros)
+	want := "01630001" + "0000000000000001" + "0000000000000002" + "0000000000000003" +
 		"0000000000000000000000000000000000000000000000000000000000000000" +
 		"0000000000000000000000000000000000000000000000000000000000000000"
 	if got != want {
@@ -87,7 +87,7 @@ func TestCelestiaDACertV1_UnmarshalErrors(t *testing.T) {
 		{"wrong version", func() []byte {
 			d := make([]byte, 92)
 			d[0] = CustomDAHeaderFlag
-			d[1] = CelestiaProviderTag
+			d[1] = CelestiaMessageHeaderFlag
 			d[2] = 0xFF // version high byte
 			d[3] = 0xFF // version low byte
 			return d

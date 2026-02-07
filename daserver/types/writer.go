@@ -28,6 +28,9 @@ type Writer interface {
 		message []byte,
 		timeout uint64,
 	) containers.PromiseInterface[[]byte]
+
+	// GetMaxMessageSize returns the maximum message size the writer can accept.
+	GetMaxMessageSize() containers.PromiseInterface[int]
 }
 
 func NewWriterForCelestia(celestiaWriter CelestiaWriter) *writerForCelestia {
@@ -50,6 +53,12 @@ func (c *writerForCelestia) Store(
 			return nil, err
 		}
 		return cert, nil
+	})
+}
+
+func (c *writerForCelestia) GetMaxMessageSize() containers.PromiseInterface[int] {
+	return containers.DoPromise(context.Background(), func(ctx context.Context) (int, error) {
+		return c.celestiaWriter.MaxMessageSize(ctx)
 	})
 }
 

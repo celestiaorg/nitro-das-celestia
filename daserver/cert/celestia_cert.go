@@ -16,7 +16,7 @@ const (
 // CelestiaDACertV1 is the Custom DA certificate format for Celestia.
 // Binary layout (big endian):
 // [0]      header (0x01)
-// [1]      providerType (0x0c)
+// [1]      providerType (0x63)
 // [2..3]   version (uint16)
 // [4..11]  blockHeight (uint64)
 // [12..19] start (uint64)

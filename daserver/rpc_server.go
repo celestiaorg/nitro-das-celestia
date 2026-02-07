@@ -11,6 +11,7 @@ import (
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/validator"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
@@ -48,6 +49,7 @@ var (
 type DaClientServer struct {
 	reader       types.Reader
 	writer       types.Writer
+	validator    types.Validator
 	dataReceiver *data_streaming.DataStreamReceiver
 	headerBytes  []byte // supported header bytes (TODO: Cleanup)
 }
@@ -97,12 +99,12 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 	// 	return nil, err
 	// }
 
-	// TODO: use NewServerWithDAPProvider and add "validator" for the custom da proofs for Nitro
 	server := &DaClientServer{
 		reader:       types.NewReaderForCelestia(celestiaReader),
 		writer:       types.NewWriterForCelestia(celestiaWriter),
+		validator:    validator.NewCelestiaValidator(),
 		dataReceiver: dataStreamReceiver,
-		headerBytes:  []byte{cert.CelestiaMessageHeaderFlag},
+		headerBytes:  []byte{cert.CustomDAHeaderFlag}, // DA API header byte is 0x01
 	}
 
 	err = rpcServer.RegisterName("daprovider", server)
@@ -223,7 +225,7 @@ func (serv *DaClientServer) RecoverPayload(
 	// check the header byte before sending out the call
 	headerByte := sequencerMsg[40]
 	if IsCelestiaMessageHeaderByte(headerByte) {
-		log.Info("CelestiaDASRPCServer.RecoverPayload", "celestiaHeaderByte", headerByte)
+		log.Info("CelestiaDASRPCServer.RecoverPayload", "daHeaderByte", headerByte)
 		promise := serv.reader.RecoverPayload(uint64(batchNum), batchBlockHash, sequencerMsg)
 		result, err := promise.Await(ctx)
 		if err != nil {
@@ -255,6 +257,20 @@ func (serv *DaClientServer) CollectPreimages(
 	return &result, nil
 }
 
+func (serv *DaClientServer) RecoverPayloadAndPreimages(
+	ctx context.Context,
+	batchNum hexutil.Uint64,
+	batchBlockHash common.Hash,
+	sequencerMsg hexutil.Bytes,
+) (*daprovider.PayloadAndPreimagesResult, error) {
+	promise := serv.reader.RecoverPayloadAndPreimages(uint64(batchNum), batchBlockHash, sequencerMsg)
+	result, err := promise.Await(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (serv *DaClientServer) Store(
 	message hexutil.Bytes,
 	timeout hexutil.Uint64,
@@ -272,6 +288,14 @@ func (serv *DaClientServer) GetSupportedHeaderBytes(ctx context.Context) (*serve
 	return &server_api.SupportedHeaderBytesResult{
 		HeaderBytes: serv.headerBytes,
 	}, nil
+}
+
+func (serv *DaClientServer) GetMaxMessageSize(ctx context.Context) (*server_api.MaxMessageSizeResult, error) {
+	maxSize, err := serv.writer.GetMaxMessageSize().Await(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &server_api.MaxMessageSizeResult{MaxSize: maxSize}, nil
 }
 
 // WriterServer methods (Data Stream API)
@@ -300,23 +324,22 @@ func (s *DaClientServer) CommitChunkedStore(ctx context.Context, messageId hexut
 	return &server_api.StoreResult{SerializedDACert: serializedDACert}, err
 }
 
-// TODO: Add
-// func (s *ValidatorServer) GenerateReadPreimageProof(ctx context.Context, certHash common.Hash, offset hexutil.Uint64, certificate hexutil.Bytes) (*server_api.GenerateReadPreimageProofResult, error) {
-// 	// #nosec G115
-// 	promise := s.validator.GenerateReadPreimageProof(certHash, uint64(offset), certificate)
-// 	result, err := promise.Await(ctx)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return &server_api.GenerateReadPreimageProofResult{Proof: hexutil.Bytes(result.Proof)}, nil
-// }
+// Validator RPC methods
 
-// func (s *ValidatorServer) GenerateCertificateValidityProof(ctx context.Context, certificate hexutil.Bytes) (*server_api.GenerateCertificateValidityProofResult, error) {
-// 	// #nosec G115
-// 	promise := s.validator.GenerateCertificateValidityProof(certificate)
-// 	result, err := promise.Await(ctx)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return &server_api.GenerateCertificateValidityProofResult{Proof: hexutil.Bytes(result.Proof)}, nil
-// }
+func (s *DaClientServer) GenerateReadPreimageProof(ctx context.Context, offset hexutil.Uint64, certificate hexutil.Bytes) (*server_api.GenerateReadPreimageProofResult, error) {
+	promise := s.validator.GenerateReadPreimageProof(uint64(offset), certificate)
+	result, err := promise.Await(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &server_api.GenerateReadPreimageProofResult{Proof: hexutil.Bytes(result.Proof)}, nil
+}
+
+func (s *DaClientServer) GenerateCertificateValidityProof(ctx context.Context, certificate hexutil.Bytes) (*server_api.GenerateCertificateValidityProofResult, error) {
+	promise := s.validator.GenerateCertificateValidityProof(certificate)
+	result, err := promise.Await(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &server_api.GenerateCertificateValidityProofResult{Proof: hexutil.Bytes(result.Proof)}, nil
+}

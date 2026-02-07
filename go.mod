@@ -9,7 +9,7 @@ require (
 	github.com/cometbft/cometbft v0.38.17
 	github.com/ethereum/go-ethereum v1.16.8
 	github.com/joho/godotenv v1.5.1
-	github.com/offchainlabs/nitro v0.0.0-20251114235254-52e89593471e
+	github.com/offchainlabs/nitro v0.0.0-20260120142718-03e22df79fa1
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	github.com/succinctlabs/sp1-blobstream v1.1.0

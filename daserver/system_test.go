@@ -192,7 +192,7 @@ func TestCelestiaIntegration(t *testing.T) {
 		// Verify cert structure
 		require.Equal(t, cert.CelestiaDACertV1Len, len(storedBytes), "cert should be exactly 92 bytes")
 		require.Equal(t, cert.CustomDAHeaderFlag, storedBytes[0], "first byte should be custom DA header")
-		require.Equal(t, cert.CelestiaProviderTag, storedBytes[1], "second byte should be provider tag")
+		require.Equal(t, cert.CelestiaMessageHeaderFlag, storedBytes[1], "second byte should be provider tag")
 
 		// Verify round-trip
 		parsedCert := &cert.CelestiaDACertV1{}

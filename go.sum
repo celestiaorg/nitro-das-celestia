@@ -1671,8 +1671,8 @@ github.com/oasisprotocol/curve25519-voi v0.0.0-20230904125328-1f23a7beb09a h1:dl
 github.com/oasisprotocol/curve25519-voi v0.0.0-20230904125328-1f23a7beb09a/go.mod h1:hVoHR2EVESiICEMbg137etN/Lx+lSrHPTD39Z/uE+2s=
 github.com/offchainlabs/go-ethereum v0.0.0-20251022131606-14e288309209 h1:VuabX6SbTLM0P1nI2b59KHq5T8QNFmX92SeHwUBC854=
 github.com/offchainlabs/go-ethereum v0.0.0-20251022131606-14e288309209/go.mod h1:5ddbknJXR9ELw4pzqh5U6PdVrOHXRjZcTAGKUCG0FWg=
-github.com/offchainlabs/nitro v0.0.0-20251114235254-52e89593471e h1:bYPGDs+Ble1t8AaYwb4hqemQnCwFvLBJ9FRfEV//zW4=
-github.com/offchainlabs/nitro v0.0.0-20251114235254-52e89593471e/go.mod h1:XNId4Z14fa0aWY4eAhKILsD/WiAzPhRnB41c+so+1Bo=
+github.com/offchainlabs/nitro v0.0.0-20260120142718-03e22df79fa1 h1:/DcXiBVdruPNWtcXQcXa+8wMUf3+0zNY/a8agVNw2WM=
+github.com/offchainlabs/nitro v0.0.0-20260120142718-03e22df79fa1/go.mod h1:94E8o3tShaCMeMIqbHlp91YNCVzIykabrDvYwmm9QjY=
 github.com/oklog/oklog v0.3.2/go.mod h1:FCV+B7mhrz4o+ueLpx+KqkyXRGMWOYEvfiXtdGtbWGs=
 github.com/oklog/run v1.0.0/go.mod h1:dlhp/R75TPv97u0XWUtDeV/lRKWPKSdTuV0TZvrmrQA=
 github.com/oklog/run v1.1.0 h1:GEenZ1cK0+q0+wsJew9qUg/DyD8k3JzYsZAi5gYi2mA=

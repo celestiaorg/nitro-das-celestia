@@ -29,6 +29,13 @@ type Reader interface {
 		batchBlockHash common.Hash,
 		sequencerMsg []byte,
 	) containers.PromiseInterface[daprovider.PreimagesResult]
+
+	// RecoverPayloadAndPreimages recovers payload and collects preimages in a single call
+	RecoverPayloadAndPreimages(
+		batchNum uint64,
+		batchBlockHash common.Hash,
+		sequencerMsg []byte,
+	) containers.PromiseInterface[daprovider.PayloadAndPreimagesResult]
 }
 
 // RecordPreimagesTo takes in preimages map and returns a function that can be used
@@ -91,6 +98,21 @@ func (c *readerForCelestia) CollectPreimages(
 	return containers.DoPromise(context.Background(), func(ctx context.Context) (daprovider.PreimagesResult, error) {
 		_, preimages, err := RecoverPayloadFromCelestiaBatch(ctx, batchNum, sequencerMsg, c.celestiaReader, true)
 		return daprovider.PreimagesResult{Preimages: preimages}, err
+	})
+}
+
+// RecoverPayloadAndPreimages recovers payload and collects preimages from the DA provider given the batch header information
+func (c *readerForCelestia) RecoverPayloadAndPreimages(
+	batchNum uint64,
+	batchBlockHash common.Hash,
+	sequencerMsg []byte,
+) containers.PromiseInterface[daprovider.PayloadAndPreimagesResult] {
+	return containers.DoPromise(context.Background(), func(ctx context.Context) (daprovider.PayloadAndPreimagesResult, error) {
+		payload, preimages, err := RecoverPayloadFromCelestiaBatch(ctx, batchNum, sequencerMsg, c.celestiaReader, true)
+		return daprovider.PayloadAndPreimagesResult{
+			Payload:   payload,
+			Preimages: preimages,
+		}, err
 	})
 }
 

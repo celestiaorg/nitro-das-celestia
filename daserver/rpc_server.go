@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
-	"github.com/celestiaorg/nitro-das-celestia/daserver/validator"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
+	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/offchainlabs/nitro/util/pretty"
 
 	"github.com/offchainlabs/nitro/daprovider/data_streaming"
@@ -100,7 +102,7 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 		reader:       types.NewReaderForCelestia(celestiaReader),
 		writer:       types.NewWriterForCelestia(celestiaWriter),
 		dataReceiver: dataStreamReceiver,
-		headerBytes:  []byte{CelestiaMessageHeaderFlag},
+		headerBytes:  []byte{cert.CelestiaMessageHeaderFlag},
 	}
 
 	err = rpcServer.RegisterName("daprovider", server)
@@ -153,13 +155,13 @@ func (serv *CelestiaDASRPCServer) Store(ctx context.Context, message hexutil.Byt
 	return result, nil
 }
 
-func (serv *CelestiaDASRPCServer) Read(ctx context.Context, blobPointer *types.BlobPointer) (*types.ReadResult, error) {
+func (serv *CelestiaDASRPCServer) Read(ctx context.Context, certificate *cert.CelestiaDACertV1) (*types.ReadResult, error) {
 	log.Info("CelestiaDASRPCServer.Read",
-		"blockHeight", blobPointer.BlockHeight,
-		"start", blobPointer.Start,
-		"sharesLength", blobPointer.SharesLength,
-		"dataRoot", hex.EncodeToString(blobPointer.DataRoot[:]),
-		"txCommitment", hex.EncodeToString(blobPointer.TxCommitment[:]),
+		"blockHeight", certificate.BlockHeight,
+		"start", certificate.Start,
+		"sharesLength", certificate.SharesLength,
+		"dataRoot", hex.EncodeToString(certificate.DataRoot[:]),
+		"txCommitment", hex.EncodeToString(certificate.TxCommitment[:]),
 	)
 	rpcReadRequestGauge.Inc(1)
 	start := time.Now()
@@ -173,7 +175,7 @@ func (serv *CelestiaDASRPCServer) Read(ctx context.Context, blobPointer *types.B
 		rpcReadDurationHistogram.Update(time.Since(start).Nanoseconds())
 	}()
 
-	result, err := serv.celestiaReader.Read(ctx, blobPointer)
+	result, err := serv.celestiaReader.Read(ctx, certificate)
 	if err != nil {
 		return nil, err
 	}

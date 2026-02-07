@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
@@ -114,15 +113,7 @@ func RecoverPayloadFromCelestiaBatch(
 		return nil, nil, err
 	}
 
-	blobPointer := BlobPointer{
-		BlockHeight:  certificate.BlockHeight,
-		Start:        certificate.Start,
-		SharesLength: certificate.SharesLength,
-		TxCommitment: certificate.TxCommitment,
-		DataRoot:     certificate.DataRoot,
-	}
-
-	result, err := c.celestiaReader.Read(ctx, &blobPointer)
+	result, err := celestiaReader.Read(ctx, certificate)
 	if err != nil {
 		log.Error("Failed to resolve blob pointer from celestia", "err", err)
 		return nil, nil, err
@@ -158,9 +149,9 @@ func RecoverPayloadFromCelestiaBatch(
 
 		dataRoot := tree.HashFromByteSlices(preimageRecorder, slices)
 
-		dataRootMatches := bytes.Equal(dataRoot, blobPointer.DataRoot[:])
+		dataRootMatches := bytes.Equal(dataRoot, certificate.DataRoot[:])
 		if !dataRootMatches {
-			log.Error("Data Root do not match", "blobPointer data root", blobPointer.DataRoot, "calculated", dataRoot)
+			log.Error("Data Root do not match", "blobPointer data root", certificate.DataRoot, "calculated", dataRoot)
 			return nil, nil, errors.New("data roots do not match")
 		}
 	}

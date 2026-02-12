@@ -27,6 +27,7 @@ import (
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/celestiaorg/rsmt2d"
+	"github.com/cometbft/cometbft/crypto/merkle"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -44,10 +45,8 @@ type DAConfig struct {
 	GasPrice                    float64            `koanf:"gas-price" reload:"hot"`
 	GasMultiplier               float64            `koanf:"gas-multiplier" reload:"hot"`
 	Rpc                         string             `koanf:"rpc" reload:"hot"`
-	ReadRpc                     string             `koanf:"read-rpc" reload:"hot"`
 	NamespaceId                 string             `koanf:"namespace-id" `
 	AuthToken                   string             `koanf:"auth-token" reload:"hot"`
-	ReadAuthToken               string             `koanf:"read-auth-token" reload:"hot"`
 	CoreToken                   string             `koanf:"core-token" reload:"hot"`
 	CoreURL                     string             `koanf:"core-url" reload:"hot"`
 	CoreNetwork                 string             `koanf:"core-network" reload:"hot"`
@@ -256,6 +255,10 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 		return nil, errors.New("celestia cfg cannot be blank")
 	}
 
+	if cfg.RetryConfig.MaxRetries <= 0 {
+		cfg.RetryConfig = DefaultCelestiaRetryConfig
+	}
+
 	if cfg.NamespaceId == "" {
 		return nil, errors.New("namespace id cannot be blank")
 	}
@@ -275,10 +278,10 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 
 	// use dedicated read rpc or use the same as the da-client
 	var readConfig txclient.ReadConfig
-	if cfg.ReadRpc != "" && cfg.ReadAuthToken != "" {
+	if cfg.Rpc != "" && cfg.AuthToken != "" {
 		readConfig = txclient.ReadConfig{
-			BridgeDAAddr: cfg.ReadRpc,
-			DAAuthToken:  cfg.ReadAuthToken,
+			BridgeDAAddr: cfg.Rpc,
+			DAAuthToken:  cfg.AuthToken,
 			EnableDATLS:  cfg.EnableDATLS,
 		}
 	} else {
@@ -367,10 +370,16 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 }
 
 func (c *CelestiaDA) Stop() error {
-	c.Client.Close()
-	c.ReadClient.Close()
+	if c.Client != nil {
+		c.Client.Close()
+	}
+	if c.ReadClient != nil {
+		c.ReadClient.Close()
+	}
 	if c.Cfg.ExperimentalTxClient {
-		c.TxClient.Close()
+		if c.TxClient != nil {
+			c.TxClient.Close()
+		}
 	}
 	return nil
 }
@@ -827,17 +836,23 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	log.Info("Verified Celestia Attestation", "height", blobPointer.BlockHeight, "valid", valid)
 
 	if valid {
-		rangeResult, err := c.ReadClient.Share.GetRange(ctx, blobPointer.BlockHeight, int(blobPointer.Start), int(blobPointer.Start+blobPointer.SharesLength))
-		if err != nil {
-			celestiaValidationFailureCounter.Inc(1)
-			log.Error("Unable to get ShareProof", "err", err)
-			return nil, err
+		squareSize := uint64(len(header.DAH.RowRoots))
+		odsSize := squareSize / 2
+		if odsSize == 0 {
+			return nil, fmt.Errorf("invalid ods size")
+		}
+		if blobPointer.Start >= odsSize*odsSize {
+			return nil, fmt.Errorf("start index out of bounds")
+		}
+		startRow := blobPointer.Start / odsSize
+		if startRow >= uint64(len(header.DAH.RowRoots)) {
+			return nil, fmt.Errorf("row index out of bounds")
 		}
 
-		sharesProof := rangeResult.Proof
-
-		namespaceNode := toNamespaceNode(sharesProof.RowProof.RowRoots[0])
-		rowProof := toRowProofs((sharesProof.RowProof.Proofs[0]))
+		rowRoot := header.DAH.RowRoots[startRow]
+		_, allProofs := merkle.ProofsFromByteSlices(append(header.DAH.RowRoots, header.DAH.ColumnRoots...))
+		rowProof := toRowProofs(allProofs[startRow])
+		namespaceNode := toNamespaceNode(rowRoot)
 		attestationProof := toAttestationProof(event.ProofNonce.Uint64(), blobPointer.BlockHeight, blobPointer.DataRoot, dataRootProof)
 
 		celestiaVerifierAbi, err := celestiagen.CelestiaBatchVerifierMetaData.GetAbi()
@@ -1071,17 +1086,23 @@ func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cer
 		return nil, nil
 	}
 
-	rangeResult, err := c.ReadClient.Share.GetRange(ctx, certificate.BlockHeight, int(certificate.Start), int(certificate.Start+certificate.SharesLength))
-	if err != nil {
-		celestiaValidationFailureCounter.Inc(1)
-		log.Error("Unable to get ShareProof", "err", err)
-		return nil, err
+	squareSize := uint64(len(header.DAH.RowRoots))
+	odsSize := squareSize / 2
+	if odsSize == 0 {
+		return nil, fmt.Errorf("invalid ods size")
+	}
+	if certificate.Start >= odsSize*odsSize {
+		return nil, fmt.Errorf("start index out of bounds")
+	}
+	startRow := certificate.Start / odsSize
+	if startRow >= uint64(len(header.DAH.RowRoots)) {
+		return nil, fmt.Errorf("row index out of bounds")
 	}
 
-	sharesProof := rangeResult.Proof
-
-	namespaceNode := toNamespaceNode(sharesProof.RowProof.RowRoots[0])
-	rowProof := toRowProofs((sharesProof.RowProof.Proofs[0]))
+	rowRoot := header.DAH.RowRoots[startRow]
+	_, allProofs := merkle.ProofsFromByteSlices(append(header.DAH.RowRoots, header.DAH.ColumnRoots...))
+	rowProof := toRowProofs(allProofs[startRow])
+	namespaceNode := toNamespaceNode(rowRoot)
 	attestationProof := toAttestationProof(event.ProofNonce.Uint64(), certificate.BlockHeight, certificate.DataRoot, dataRootProof)
 
 	celestiaVerifierAbi, err := celestiagen.CelestiaBatchVerifierMetaData.GetAbi()

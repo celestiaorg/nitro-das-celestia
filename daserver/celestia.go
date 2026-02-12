@@ -3,6 +3,7 @@ package das
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -37,6 +38,8 @@ import (
 
 	blobstreamx "github.com/succinctlabs/sp1-blobstream/bindings"
 )
+
+const ProofVersion = 1
 
 type DAConfig struct {
 	WithWriter                  bool               `koanf:"with-writer"`
@@ -525,7 +528,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 		txCommitment,
 		dataRoot,
 	)
-	
+
 	serializedCert, err := certificate.MarshalBinary()
 	if err != nil {
 		celestiaFailureCounter.Inc(1)
@@ -950,4 +953,161 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 			end = latestBlockNumber
 		}
 	}
+}
+
+func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint64, certificate *cert.CelestiaDACertV1) ([]byte, error) {
+	proofData, err := c.generateCelestiaProof(ctx, certificate)
+	if err != nil {
+		return nil, err
+	}
+
+	proof := make([]byte, 8+len(proofData))
+	binary.BigEndian.PutUint64(proof[0:8], uint64(len(certificate.DataRoot)))
+	copy(proof[8:], proofData)
+
+	return proof, nil
+}
+
+func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
+	proofData, err := c.generateCelestiaProof(ctx, certificate)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(proofData) == 0 {
+		return []byte{0, ProofVersion}, nil
+	}
+
+	return []byte{1, ProofVersion}, nil
+}
+
+func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
+	if c.Cfg.ValidatorConfig.EthClient == "" || c.Cfg.ValidatorConfig.BlobstreamAddr == "" {
+		return nil, fmt.Errorf("no celestia prover config")
+	}
+
+	ethRpc, err := ethclient.Dial(c.Cfg.ValidatorConfig.EthClient)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Couldn't dial to eth rpc for Blobstream proof", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
+		return nil, err
+	}
+	defer ethRpc.Close()
+
+	blobstream, err := blobstreamx.NewBindings(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Couldn't instantiate client for blobstream", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "blobstreamAddr", common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), "err", err)
+		return nil, err
+	}
+
+	header, err := c.ReadClient.Header.GetByHeight(ctx, certificate.BlockHeight)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Warn("Header retrieval error", "err", err)
+		return nil, err
+	}
+
+	latestBlockNumber, err := ethRpc.BlockNumber(context.Background())
+	if err != nil {
+		log.Warn("could not fetch latest L1 block", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
+		Pending:     false,
+		BlockNumber: big.NewInt(int64(latestBlockNumber)),
+		Context:     ctx,
+	})
+	if err != nil {
+		log.Warn("could not fetch latestBlock on BlobstreamX", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	backwards := certificate.BlockHeight < latestCelestiaBlock
+
+	event, err := c.filter(ctx, ethRpc, blobstream, latestBlockNumber, certificate.BlockHeight, backwards)
+	if err != nil {
+		log.Warn("event filtering error", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(ctx, certificate.BlockHeight, event.StartBlock, event.EndBlock)
+	if err != nil {
+		log.Warn("could not get data root proof", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	sideNodes := make([][32]byte, len((*dataRootProof).Aunts))
+	for i, aunt := range (*dataRootProof).Aunts {
+		sideNodes[i] = *(*[32]byte)(aunt)
+	}
+
+	tuple := blobstreamx.DataRootTuple{
+		Height:   big.NewInt(int64(certificate.BlockHeight)),
+		DataRoot: [32]byte(header.DataHash),
+	}
+
+	proof := blobstreamx.BinaryMerkleProof{
+		SideNodes: sideNodes,
+		Key:       big.NewInt((*dataRootProof).Index),
+		NumLeaves: big.NewInt((*dataRootProof).Total),
+	}
+
+	valid, err := blobstream.VerifyAttestation(
+		&bind.CallOpts{},
+		event.ProofNonce,
+		tuple,
+		proof,
+	)
+	if err != nil {
+		log.Warn("could not verify attestation", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	log.Info("Verified Celestia Attestation", "height", certificate.BlockHeight, "valid", valid)
+
+	if !valid {
+		return nil, nil
+	}
+
+	rangeResult, err := c.ReadClient.Share.GetRange(ctx, certificate.BlockHeight, int(certificate.Start), int(certificate.Start+certificate.SharesLength))
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Unable to get ShareProof", "err", err)
+		return nil, err
+	}
+
+	sharesProof := rangeResult.Proof
+
+	namespaceNode := toNamespaceNode(sharesProof.RowProof.RowRoots[0])
+	rowProof := toRowProofs((sharesProof.RowProof.Proofs[0]))
+	attestationProof := toAttestationProof(event.ProofNonce.Uint64(), certificate.BlockHeight, certificate.DataRoot, dataRootProof)
+
+	celestiaVerifierAbi, err := celestiagen.CelestiaBatchVerifierMetaData.GetAbi()
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Could not get ABI for Celestia Batch Verifier", "err", err)
+		return nil, err
+	}
+
+	verifyProofABI := celestiaVerifierAbi.Methods["verifyProof"]
+
+	proofData, err := verifyProofABI.Inputs.Pack(
+		common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), namespaceNode, rowProof, attestationProof,
+	)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Could not pack structs into ABI", "err", err)
+		return nil, err
+	}
+
+	celestiaValidationSuccessCounter.Inc(1)
+	celestiaValidationLastSuccesfulActionGauge.Update(time.Now().Unix())
+	return proofData, nil
 }

@@ -8,7 +8,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     uint256 private constant CERT_SIZE_LEN = 8;
     uint256 private constant CLAIMED_VALID_LEN = 1;
     uint256 private constant CERT_HEADER = 0x01;
-    uint256 private constant PROVIDER_TYPE = 0x0c;
+    uint256 private constant PROVIDER_TYPE = 0x63; // 'c' for Celestia
     uint256 private constant CERT_V1_LEN = 92;
 
     address public immutable blobstreamX;

@@ -102,7 +102,7 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 	server := &DaClientServer{
 		reader:       types.NewReaderForCelestia(celestiaReader),
 		writer:       types.NewWriterForCelestia(celestiaWriter),
-		validator:    validator.NewCelestiaValidator(),
+		validator:    validator.NewCelestiaValidator(celestiaReader),
 		dataReceiver: dataStreamReceiver,
 		headerBytes:  []byte{cert.CustomDAHeaderFlag}, // DA API header byte is 0x01
 	}

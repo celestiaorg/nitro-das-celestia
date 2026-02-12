@@ -24,4 +24,6 @@ type ReadResult struct {
 type CelestiaReader interface {
 	Read(ctx context.Context, cert *cert.CelestiaDACertV1) (*ReadResult, error)
 	GetProof(ctx context.Context, msg []byte) ([]byte, error)
+	GenerateReadPreimageProof(ctx context.Context, offset uint64, certificate *cert.CelestiaDACertV1) ([]byte, error)
+	GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error)
 }

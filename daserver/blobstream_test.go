@@ -9,13 +9,16 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
@@ -23,6 +26,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/stretchr/testify/require"
+	blobstreamx "github.com/succinctlabs/sp1-blobstream/bindings"
 )
 
 func init() {
@@ -46,7 +50,6 @@ func setupNetworkTest(t *testing.T) (*CelestiaDA, string, func(), context.Contex
 	// Create CelestiaDA instance connected to local node
 	cfg := &DAConfig{
 		Rpc:              "http://localhost:26658", // Default Celestia light node RPC port
-		ReadRpc:          "http://localhost:26658",
 		NamespaceId:      namespaceID,
 		AuthToken:        authToken,
 		CacheCleanupTime: time.Minute,
@@ -122,10 +125,24 @@ func TestGetProofVerification(t *testing.T) {
 	commitment, err := base64.StdEncoding.DecodeString(os.Getenv("COMMITMENT"))
 	require.NoError(t, err)
 
-	header, _ := celestiaDA.Client.Header.GetByHeight(ctx, height)
+	header, err := celestiaDA.ReadClient.Header.GetByHeight(ctx, height)
+	if err != nil {
+		if strings.Contains(err.Error(), "syncing in progress") || strings.Contains(err.Error(), "from the future") || strings.Contains(err.Error(), "nil Header") {
+			t.Skipf("celestia node not synced to height %d: %v", height, err)
+		}
+		require.NoError(t, err)
+	}
+	if header == nil {
+		t.Skipf("celestia header unavailable at height %d", height)
+	}
 
-	dataBlob, err := celestiaDA.Client.Blob.Get(ctx, height, namespace, commitment)
-	require.NoError(t, err)
+	dataBlob, err := celestiaDA.ReadClient.Blob.Get(ctx, height, namespace, commitment)
+	if err != nil {
+		if strings.Contains(err.Error(), "syncing in progress") || strings.Contains(err.Error(), "from the future") {
+			t.Skipf("celestia node not synced to height %d: %v", height, err)
+		}
+		require.NoError(t, err)
+	}
 
 	txCommitment, dataRoot := [32]byte{}, [32]byte{}
 	copy(txCommitment[:], dataBlob.Commitment)
@@ -160,10 +177,18 @@ func TestGetProofVerification(t *testing.T) {
 		DataRoot:     dataRoot,
 	}
 
+	celestiaCert := cert.NewCelestiaCertificate(
+		height,
+		uint64(startIndexOds),
+		uint64(sharesLength),
+		txCommitment,
+		dataRoot,
+	)
+
 	t.Run("Read Message BlobPointer", func(t *testing.T) {
 		// Read through RPC
 		var readResult types.ReadResult
-		err = client.Call(&readResult, "celestia_read", &blobPointer)
+		err = client.Call(&readResult, "celestia_read", celestiaCert)
 		require.NoError(t, err)
 		require.NotNil(t, readResult)
 
@@ -177,6 +202,26 @@ func TestGetProofVerification(t *testing.T) {
 	})
 
 	t.Run("Get Proof e2e", func(t *testing.T) {
+		ethRpc, err := ethclient.Dial(celestiaDA.Cfg.ValidatorConfig.EthClient)
+		require.NoError(t, err)
+		defer ethRpc.Close()
+
+		blobstream, err := blobstreamx.NewBindings(common.HexToAddress(celestiaDA.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
+		require.NoError(t, err)
+
+		latestBlockNumber, err := ethRpc.BlockNumber(context.Background())
+		require.NoError(t, err)
+
+		latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
+			Pending:     false,
+			BlockNumber: big.NewInt(int64(latestBlockNumber)),
+			Context:     ctx,
+		})
+		require.NoError(t, err)
+
+		if height > latestCelestiaBlock {
+			t.Skipf("height %d not yet relayed to blobstream (latest %d)", height, latestCelestiaBlock)
+		}
 
 		blobBytes, err := blobPointer.MarshalBinary()
 		require.NoError(t, err)
@@ -237,9 +282,6 @@ func TestGetProofVerification(t *testing.T) {
 
 		// Copy the unpacked values into our struct
 		err = verifyProofABI.Inputs.Copy(&args, values)
-		require.NoError(t, err)
-
-		ethRpc, err := ethclient.Dial(celestiaDA.Cfg.ValidatorConfig.EthClient)
 		require.NoError(t, err)
 
 		packedData, _ := verifyProofABI.Inputs.Pack(

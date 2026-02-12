@@ -125,7 +125,7 @@ func TestGetProofVerification(t *testing.T) {
 	commitment, err := base64.StdEncoding.DecodeString(os.Getenv("COMMITMENT"))
 	require.NoError(t, err)
 
-	header, err := celestiaDA.ReadClient.Header.GetByHeight(ctx, height)
+	header, err := celestiaDA.Client.Header.GetByHeight(ctx, height)
 	if err != nil {
 		if strings.Contains(err.Error(), "syncing in progress") || strings.Contains(err.Error(), "from the future") || strings.Contains(err.Error(), "nil Header") {
 			t.Skipf("celestia node not synced to height %d: %v", height, err)
@@ -136,7 +136,7 @@ func TestGetProofVerification(t *testing.T) {
 		t.Skipf("celestia header unavailable at height %d", height)
 	}
 
-	dataBlob, err := celestiaDA.ReadClient.Blob.Get(ctx, height, namespace, commitment)
+	dataBlob, err := celestiaDA.Client.Blob.Get(ctx, height, namespace, commitment)
 	if err != nil {
 		if strings.Contains(err.Error(), "syncing in progress") || strings.Contains(err.Error(), "from the future") {
 			t.Skipf("celestia node not synced to height %d: %v", height, err)

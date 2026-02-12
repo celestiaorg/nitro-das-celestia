@@ -45,8 +45,10 @@ type DAConfig struct {
 	GasPrice                    float64            `koanf:"gas-price" reload:"hot"`
 	GasMultiplier               float64            `koanf:"gas-multiplier" reload:"hot"`
 	Rpc                         string             `koanf:"rpc" reload:"hot"`
+	ReadRpc                     string             `koanf:"read-rpc" reload:"hot"`
 	NamespaceId                 string             `koanf:"namespace-id" `
 	AuthToken                   string             `koanf:"auth-token" reload:"hot"`
+	ReadAuthToken               string             `koanf:"read-auth-token" reload:"hot"`
 	CoreToken                   string             `koanf:"core-token" reload:"hot"`
 	CoreURL                     string             `koanf:"core-url" reload:"hot"`
 	CoreNetwork                 string             `koanf:"core-network" reload:"hot"`
@@ -278,10 +280,10 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 
 	// use dedicated read rpc or use the same as the da-client
 	var readConfig txclient.ReadConfig
-	if cfg.Rpc != "" && cfg.AuthToken != "" {
+	if cfg.ReadRpc != "" && cfg.ReadAuthToken != "" {
 		readConfig = txclient.ReadConfig{
-			BridgeDAAddr: cfg.Rpc,
-			DAAuthToken:  cfg.AuthToken,
+			BridgeDAAddr: cfg.ReadRpc,
+			DAAuthToken:  cfg.ReadAuthToken,
 			EnableDATLS:  cfg.EnableDATLS,
 		}
 	} else {

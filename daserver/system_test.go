@@ -3,6 +3,7 @@ package das
 import (
 	"context"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -17,6 +18,9 @@ import (
 )
 
 func getAuthToken(t *testing.T, network string) string {
+	if token := os.Getenv("CELESTIA_AUTH_TOKEN"); token != "" {
+		return strings.TrimSpace(token)
+	}
 	cmd := exec.Command("celestia", "light", "auth", "admin", "--p2p.network", network)
 	output, err := cmd.Output()
 	require.NoError(t, err, "Failed to get auth token")
@@ -29,7 +33,10 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 	require.NotEmpty(t, authToken, "Auth token should not be empty")
 
 	// Generate namespace ID
-	namespaceID := "000008e5f679bf7116cb"
+	namespaceID := os.Getenv("NAMESPACE")
+	if namespaceID == "" {
+		namespaceID = "000008e5f679bf7116cb"
+	}
 	require.NotEmpty(t, namespaceID, "Namespace ID should not be empty")
 
 	// Create CelestiaDA instance connected to local node
@@ -52,10 +59,10 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 
 	// RPC server timeouts
 	timeouts := genericconf.HTTPServerTimeoutConfig{
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      5 * time.Second,
-		IdleTimeout:       5 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		ReadHeaderTimeout: 5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       5 * time.Minute,
 	}
 
 	// Start the RPC server
@@ -81,16 +88,6 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 	}
 
 	return celestiaDA, endpoint, cleanup
-}
-
-func certToBlobPointer(c *cert.CelestiaDACertV1) types.BlobPointer {
-	return types.BlobPointer{
-		BlockHeight:  c.BlockHeight,
-		Start:        c.Start,
-		SharesLength: c.SharesLength,
-		TxCommitment: c.TxCommitment,
-		DataRoot:     c.DataRoot,
-	}
 }
 
 func TestCelestiaIntegration(t *testing.T) {
@@ -121,11 +118,9 @@ func TestCelestiaIntegration(t *testing.T) {
 		err = parsedCert.UnmarshalBinary(storedBytes)
 		require.NoError(t, err)
 
-		blobPointer := certToBlobPointer(parsedCert)
-
 		// Read through RPC
 		var readResult types.ReadResult
-		err = client.Call(&readResult, "celestia_read", &blobPointer)
+		err = client.Call(&readResult, "celestia_read", parsedCert)
 		require.NoError(t, err)
 		require.NotNil(t, readResult)
 
@@ -154,9 +149,8 @@ func TestCelestiaIntegration(t *testing.T) {
 			err = parsedCert.UnmarshalBinary(storedBytes)
 			require.NoError(t, err)
 
-			blobPointer := certToBlobPointer(parsedCert)
 			var readResult types.ReadResult
-			err = client.Call(&readResult, "celestia_read", &blobPointer)
+			err = client.Call(&readResult, "celestia_read", parsedCert)
 			require.NoError(t, err)
 			require.Equal(t, msg, readResult.Message)
 		}

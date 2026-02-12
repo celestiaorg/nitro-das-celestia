@@ -39,8 +39,6 @@ import (
 	blobstreamx "github.com/succinctlabs/sp1-blobstream/bindings"
 )
 
-const ProofVersion = 1
-
 type DAConfig struct {
 	WithWriter                  bool               `koanf:"with-writer"`
 	GasPrice                    float64            `koanf:"gas-price" reload:"hot"`
@@ -537,7 +535,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	}
 	log.Info("Posted blob to height and dataRoot", "height", certificate.BlockHeight, "dataRoot", hex.EncodeToString(certificate.DataRoot[:]))
 
-	c.messageCache.Store(msgHashHex, certificate)
+	c.messageCache.Store(msgHashHex, serializedCert)
 
 	celestiaSuccessCounter.Inc(1)
 	celestiaDALastSuccesfulActionGauge.Update(time.Now().Unix())
@@ -956,16 +954,13 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 }
 
 func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint64, certificate *cert.CelestiaDACertV1) ([]byte, error) {
+	_ = offset
 	proofData, err := c.generateCelestiaProof(ctx, certificate)
 	if err != nil {
 		return nil, err
 	}
 
-	proof := make([]byte, 8+len(proofData))
-	binary.BigEndian.PutUint64(proof[0:8], uint64(len(certificate.DataRoot)))
-	copy(proof[8:], proofData)
-
-	return proof, nil
+	return proofData, nil
 }
 
 func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
@@ -975,10 +970,10 @@ func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certi
 	}
 
 	if len(proofData) == 0 {
-		return []byte{0, ProofVersion}, nil
+		return []byte{0}, nil
 	}
 
-	return []byte{1, ProofVersion}, nil
+	return append([]byte{1}, proofData...), nil
 }
 
 func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
@@ -1106,6 +1101,15 @@ func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cer
 		log.Error("Could not pack structs into ABI", "err", err)
 		return nil, err
 	}
+
+	serializedBatch := make([]byte, 88)
+	binary.BigEndian.PutUint64(serializedBatch[0:8], certificate.BlockHeight)
+	binary.BigEndian.PutUint64(serializedBatch[8:16], certificate.Start)
+	binary.BigEndian.PutUint64(serializedBatch[16:24], certificate.SharesLength)
+	copy(serializedBatch[24:56], certificate.TxCommitment[:])
+	copy(serializedBatch[56:88], certificate.DataRoot[:])
+
+	proofData = append(serializedBatch, proofData...)
 
 	celestiaValidationSuccessCounter.Inc(1)
 	celestiaValidationLastSuccesfulActionGauge.Update(time.Now().Unix())

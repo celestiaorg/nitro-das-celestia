@@ -32,7 +32,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         require(certificate[1] == bytes1(uint8(PROVIDER_TYPE)), "Invalid provider type");
 
         // Validate certificate proof on-chain. Proof data is supplied in the proof bytes after the cert.
-        uint256 proofStart = CERT_SIZE_LEN + certSize + CLAIMED_VALID_LEN;
+        uint256 proofStart = CERT_SIZE_LEN + certSize;
         bytes calldata proofData = proof[proofStart:];
         CelestiaBatchVerifier.Result res = CelestiaBatchVerifier.verifyBatch(blobstreamX, proofData);
         require(res == CelestiaBatchVerifier.Result.IN_BLOBSTREAM, "Invalid Celestia proof");
@@ -59,6 +59,11 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             return false;
         }
         if (certificate[1] != bytes1(uint8(PROVIDER_TYPE))) {
+            return false;
+        }
+
+        uint8 claimedValid = uint8(proof[CERT_SIZE_LEN + certSize]);
+        if (claimedValid == 0) {
             return false;
         }
 

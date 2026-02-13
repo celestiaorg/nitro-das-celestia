@@ -14,6 +14,6 @@ type Validator interface {
 	GenerateReadPreimageProof(offset uint64, certificate []byte) containers.PromiseInterface[daprovider.PreimageProofResult]
 
 	// GenerateCertificateValidityProof returns a proof of whether the certificate
-	// is valid according to your DA system's rules.
+	// is valid according to the DA system's rules.
 	GenerateCertificateValidityProof(certificate []byte) containers.PromiseInterface[daprovider.ValidityProofResult]
 }

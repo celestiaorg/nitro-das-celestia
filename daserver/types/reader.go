@@ -60,8 +60,16 @@ type readerForCelestia struct {
 	celestiaReader CelestiaReader
 }
 
+func hasBits(checking byte, bits byte) bool {
+	return (checking & bits) == bits
+}
+
+func IsCelestiaMessageHeaderByte(header byte) bool {
+	return hasBits(header, cert.CelestiaMessageHeaderFlag)
+}
+
 func (c *readerForCelestia) IsValidHeaderByte(_ context.Context, headerByte byte) bool {
-	return headerByte == cert.CustomDAHeaderFlag
+	return IsCelestiaMessageHeaderByte(headerByte)
 }
 
 func (c *readerForCelestia) HeaderByte() byte {

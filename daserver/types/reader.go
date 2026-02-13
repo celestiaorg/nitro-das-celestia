@@ -64,12 +64,12 @@ func hasBits(checking byte, bits byte) bool {
 	return (checking & bits) == bits
 }
 
-func IsCelestiaMessageHeaderByte(header byte) bool {
-	return hasBits(header, cert.CelestiaMessageHeaderFlag)
+func IsCustomDAHeaderByte(header byte) bool {
+	return hasBits(header, cert.CustomDAHeaderFlag)
 }
 
 func (c *readerForCelestia) IsValidHeaderByte(_ context.Context, headerByte byte) bool {
-	return IsCelestiaMessageHeaderByte(headerByte)
+	return IsCustomDAHeaderByte(headerByte)
 }
 
 func (c *readerForCelestia) HeaderByte() byte {

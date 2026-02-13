@@ -224,20 +224,25 @@ func (serv *DaClientServer) RecoverPayload(
 	)
 	// check the header byte before sending out the call
 	headerByte := sequencerMsg[40]
-	if IsCelestiaMessageHeaderByte(headerByte) {
+	if IsCustomDAHeaderByte(headerByte) {
 		log.Info("CelestiaDASRPCServer.RecoverPayload", "daHeaderByte", headerByte)
-		promise := serv.reader.RecoverPayload(uint64(batchNum), batchBlockHash, sequencerMsg)
-		result, err := promise.Await(ctx)
-		if err != nil {
-			log.Error("failed to recover payload from Celestia batch",
-				"batchNum", batchNum,
-				"batchBlockHash", batchBlockHash,
-				"sequencerMsg", sequencerMsg,
-				"err", err)
-			return nil, err
+		// check the message header byte as well
+		headerByte = sequencerMsg[41]
+		if IsCelestiaMessageHeaderByte(headerByte) {
+			promise := serv.reader.RecoverPayload(uint64(batchNum), batchBlockHash, sequencerMsg)
+			result, err := promise.Await(ctx)
+			if err != nil {
+				log.Error("failed to recover payload from Celestia batch",
+					"batchNum", batchNum,
+					"batchBlockHash", batchBlockHash,
+					"sequencerMsg", sequencerMsg,
+					"err", err)
+				return nil, err
+			}
+			log.Info("Recovered Payload from Celestia batch", "len(result.Payload)", len(result.Payload))
+			return &result, nil
 		}
-		log.Info("Recovered Payload from Celestia batch", "len(result.Payload)", len(result.Payload))
-		return &result, nil
+		return nil, errors.New("unknown celestia message header byte")
 	}
 
 	return nil, errors.New("unknown batch header byte")

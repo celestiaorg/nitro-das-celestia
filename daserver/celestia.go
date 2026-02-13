@@ -146,8 +146,11 @@ func hasBits(checking byte, bits byte) bool {
 	return (checking & bits) == bits
 }
 
-// NOTE: this method should be renamed, it matches the custom DA header flag
 func IsCelestiaMessageHeaderByte(header byte) bool {
+	return hasBits(header, cert.CelestiaMessageHeaderFlag)
+}
+
+func IsCustomDAHeaderByte(header byte) bool {
 	return hasBits(header, cert.CustomDAHeaderFlag)
 }
 

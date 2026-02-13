@@ -3,11 +3,13 @@ package das
 import (
 	"context"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -16,6 +18,9 @@ import (
 )
 
 func getAuthToken(t *testing.T, network string) string {
+	if token := os.Getenv("CELESTIA_AUTH_TOKEN"); token != "" {
+		return strings.TrimSpace(token)
+	}
 	cmd := exec.Command("celestia", "light", "auth", "admin", "--p2p.network", network)
 	output, err := cmd.Output()
 	require.NoError(t, err, "Failed to get auth token")
@@ -28,16 +33,19 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 	require.NotEmpty(t, authToken, "Auth token should not be empty")
 
 	// Generate namespace ID
-	namespaceID := "000008e5f679bf7116cb"
+	namespaceID := os.Getenv("NAMESPACE")
+	if namespaceID == "" {
+		namespaceID = "000008e5f679bf7116cb"
+	}
 	require.NotEmpty(t, namespaceID, "Namespace ID should not be empty")
 
 	// Create CelestiaDA instance connected to local node
 	cfg := &DAConfig{
 		Rpc:              "http://localhost:26658", // Default Celestia light node RPC port
-		ReadRpc:          "http://localhost:26658",
 		NamespaceId:      namespaceID,
 		AuthToken:        authToken,
 		CacheCleanupTime: time.Minute,
+		WithWriter:       true,
 		// Add validator config and other nec
 	}
 
@@ -50,10 +58,10 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 
 	// RPC server timeouts
 	timeouts := genericconf.HTTPServerTimeoutConfig{
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      5 * time.Second,
-		IdleTimeout:       5 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		ReadHeaderTimeout: 5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       5 * time.Minute,
 	}
 
 	// Start the RPC server
@@ -73,7 +81,9 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 	cleanup := func() {
 		cancel()
 		server.Close()
-		celestiaDA.Stop()
+		if celestiaDA != nil {
+			celestiaDA.Stop()
+		}
 	}
 
 	return celestiaDA, endpoint, cleanup
@@ -98,17 +108,18 @@ func TestCelestiaIntegration(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, storedBytes)
 
-		// Check header flag
-		require.Equal(t, CelestiaMessageHeaderFlag, storedBytes[0])
+		// Check header flag and length
+		require.Equal(t, cert.CustomDAHeaderFlag, storedBytes[0])
+		require.Equal(t, cert.CelestiaDACertV1Len, len(storedBytes))
 
-		// Parse blob pointer
-		var blobPointer types.BlobPointer
-		err = blobPointer.UnmarshalBinary(storedBytes[1:])
+		// Parse certificate
+		parsedCert := &cert.CelestiaDACertV1{}
+		err = parsedCert.UnmarshalBinary(storedBytes)
 		require.NoError(t, err)
 
 		// Read through RPC
 		var readResult types.ReadResult
-		err = client.Call(&readResult, "celestia_read", &blobPointer)
+		err = client.Call(&readResult, "celestia_read", parsedCert)
 		require.NoError(t, err)
 		require.NotNil(t, readResult)
 
@@ -133,12 +144,12 @@ func TestCelestiaIntegration(t *testing.T) {
 			err = client.Call(&storedBytes, "celestia_store", hexutil.Bytes(msg))
 			require.NoError(t, err)
 
-			var blobPointer types.BlobPointer
-			err = blobPointer.UnmarshalBinary(storedBytes[1:])
+			parsedCert := &cert.CelestiaDACertV1{}
+			err = parsedCert.UnmarshalBinary(storedBytes)
 			require.NoError(t, err)
 
 			var readResult types.ReadResult
-			err = client.Call(&readResult, "celestia_read", &blobPointer)
+			err = client.Call(&readResult, "celestia_read", parsedCert)
 			require.NoError(t, err)
 			require.Equal(t, msg, readResult.Message)
 		}
@@ -162,6 +173,27 @@ func TestCelestiaIntegration(t *testing.T) {
 		err = client.Call(&proofBytes, "celestia_getProof", storedBytes)
 		require.NoError(t, err)
 		require.NotNil(t, proofBytes)
+	})
+
+	t.Run("Certificate Format", func(t *testing.T) {
+		message := []byte("cert format test " + time.Now().String())
+
+		var storedBytes []byte
+		err = client.Call(&storedBytes, "celestia_store", hexutil.Bytes(message))
+		require.NoError(t, err)
+
+		// Verify cert structure
+		require.Equal(t, cert.CelestiaDACertV1Len, len(storedBytes), "cert should be exactly 92 bytes")
+		require.Equal(t, cert.CustomDAHeaderFlag, storedBytes[0], "first byte should be custom DA header")
+		require.Equal(t, cert.CelestiaMessageHeaderFlag, storedBytes[1], "second byte should be provider tag")
+
+		// Verify round-trip
+		parsedCert := &cert.CelestiaDACertV1{}
+		err = parsedCert.UnmarshalBinary(storedBytes)
+		require.NoError(t, err)
+		require.NotZero(t, parsedCert.BlockHeight)
+		require.NotZero(t, parsedCert.TxCommitment)
+		require.NotZero(t, parsedCert.DataRoot)
 	})
 
 	t.Run("Error Cases", func(t *testing.T) {

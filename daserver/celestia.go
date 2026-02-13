@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/offchainlabs/nitro/arbutil"
+	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/spf13/pflag"
 
 	blobstreamx "github.com/succinctlabs/sp1-blobstream/bindings"
@@ -629,7 +630,7 @@ func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV
 	headerDataHash := [32]byte{}
 	copy(headerDataHash[:], header.DataHash)
 	if headerDataHash != certificate.DataRoot {
-		return nil, fmt.Errorf("data Root mismatch, header.DataHash=%v, blobPointer.DataRoot=%v", header.DataHash, hex.EncodeToString(certificate.DataRoot[:]))
+		return nil, certificateValidationError("data root mismatch")
 	}
 
 	// Fetch blob with retry
@@ -678,34 +679,34 @@ func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV
 	startRow := certificate.Start / odsSize
 
 	if certificate.Start >= odsSize*odsSize {
-		return nil, fmt.Errorf("startIndexOds >= odsSize*odsSize, startIndexOds=%v, odsSize*odsSize=%v", certificate.Start, odsSize*odsSize)
+		return nil, certificateValidationError("start index out of bounds")
 	}
 
 	if certificate.Start+certificate.SharesLength < 1 {
-		return nil, fmt.Errorf("startIndexOds+blobPointer.SharesLength < 1, startIndexOds+blobPointer.SharesLength=%v", certificate.Start+certificate.SharesLength)
+		return nil, certificateValidationError("share range underflow")
 	}
 
 	endIndexOds := certificate.Start + certificate.SharesLength - 1
 	if endIndexOds >= odsSize*odsSize {
-		return nil, fmt.Errorf("endIndexOds >= odsSize*odsSize, endIndexOds=%v, odsSize*odsSize=%v", endIndexOds, odsSize*odsSize)
+		return nil, certificateValidationError("share range out of bounds")
 	}
 
 	endRow := endIndexOds / odsSize
 
 	if endRow >= odsSize || startRow >= odsSize {
-		return nil, fmt.Errorf("endRow >= odsSize || startRow >= odsSize, endRow=%v, startRow=%v, odsSize=%v", endRow, startRow, odsSize)
+		return nil, certificateValidationError("row index out of bounds")
 	}
 
 	startColumn := certificate.Start % odsSize
 	endColumn := endIndexOds % odsSize
 
 	if startRow == endRow && startColumn > endColumn {
-		return nil, fmt.Errorf("start and end row are the same and startColumn >= endColumn, startColumn=%v, endColumn+1=%v", startColumn, endColumn+1)
+		return nil, certificateValidationError("invalid share range ordering")
 	}
 
 	if uint64(sharesLength) != certificate.SharesLength || sharesLength == 0 {
 		celestiaFailureCounter.Inc(1)
-		return nil, fmt.Errorf("share length mismatch, sharesLength=%v, blobPointer.SharesLength=%v", sharesLength, certificate.SharesLength)
+		return nil, certificateValidationError("share length mismatch")
 	}
 
 	rows := [][][]byte{}
@@ -1168,6 +1169,10 @@ func isTransientError(err error) bool {
 		return netErr.Timeout() || netErr.Temporary()
 	}
 	return false
+}
+
+func certificateValidationError(reason string) error {
+	return &daprovider.CertificateValidationError{Reason: fmt.Sprintf("certificate validation failed: %s", reason)}
 }
 
 func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {

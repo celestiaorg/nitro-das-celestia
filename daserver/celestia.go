@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ import (
 	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
 	"github.com/celestiaorg/rsmt2d"
 	"github.com/cometbft/cometbft/crypto/merkle"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
@@ -35,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/offchainlabs/nitro/arbutil"
 	"github.com/spf13/pflag"
 
 	blobstreamx "github.com/succinctlabs/sp1-blobstream/bindings"
@@ -971,26 +974,200 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 }
 
 func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint64, certificate *cert.CelestiaDACertV1) ([]byte, error) {
-	_ = offset
+	if offset%32 != 0 {
+		return nil, fmt.Errorf("offset must be 32-byte aligned")
+	}
+
+	readResult, err := c.Read(ctx, certificate)
+	if err != nil {
+		return nil, err
+	}
+	if len(readResult.Message) == 0 {
+		return nil, errors.New("empty payload returned from celestia")
+	}
+
+	if err := validateReadResult(readResult, certificate); err != nil {
+		return nil, err
+	}
+
 	proofData, err := c.generateCelestiaProof(ctx, certificate)
 	if err != nil {
 		return nil, err
 	}
+	if len(proofData) == 0 {
+		return nil, fmt.Errorf("certificate validation failed")
+	}
 
-	return proofData, nil
+	preimage := readResult.Message
+	if offset+32 > uint64(len(preimage)) {
+		return nil, fmt.Errorf("offset out of bounds")
+	}
+
+	proof := make([]byte, 1+8+len(preimage)+len(proofData))
+	proof[0] = 0x01
+	binary.BigEndian.PutUint64(proof[1:9], uint64(len(preimage)))
+	copy(proof[9:], preimage)
+	copy(proof[9+len(preimage):], proofData)
+
+	return proof, nil
 }
 
 func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
-	proofData, err := c.generateCelestiaProof(ctx, certificate)
+	valid, err := c.validateCertificate(ctx, certificate)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(proofData) == 0 {
+	if !valid {
 		return []byte{0}, nil
 	}
 
-	return append([]byte{1}, proofData...), nil
+	return []byte{1}, nil
+}
+
+func validateReadResult(result *types.ReadResult, certificate *cert.CelestiaDACertV1) error {
+	if result.SquareSize == 0 {
+		return fmt.Errorf("invalid square size")
+	}
+
+	odsSize := result.SquareSize / 2
+	if odsSize == 0 {
+		return fmt.Errorf("invalid ods size")
+	}
+
+	rowCount := uint64(len(result.RowRoots))
+	if rowCount == 0 || len(result.ColumnRoots) != int(rowCount) {
+		return fmt.Errorf("invalid root set")
+	}
+	if result.StartRow >= rowCount || result.EndRow >= rowCount {
+		return fmt.Errorf("row index out of bounds")
+	}
+	if result.StartRow+uint64(len(result.Rows)) > rowCount {
+		return fmt.Errorf("row range exceeds available roots")
+	}
+
+	record := func(_ common.Hash, _ []byte, _ arbutil.PreimageType) {}
+	rowIndex := result.StartRow
+	for _, row := range result.Rows {
+		treeConstructor := tree.NewConstructor(record, odsSize)
+		root, err := tree.ComputeNmtRoot(treeConstructor, uint(rowIndex), row)
+		if err != nil {
+			return fmt.Errorf("failed to compute row root: %w", err)
+		}
+		if !bytes.Equal(result.RowRoots[rowIndex], root) {
+			return fmt.Errorf("row root mismatch")
+		}
+		rowIndex++
+	}
+
+	slices := make([][]byte, rowCount+rowCount)
+	copy(slices[:rowCount], result.RowRoots)
+	copy(slices[rowCount:], result.ColumnRoots)
+	dataRoot := tree.HashFromByteSlices(record, slices)
+	if !bytes.Equal(dataRoot, certificate.DataRoot[:]) {
+		return fmt.Errorf("data root mismatch")
+	}
+
+	return nil
+}
+
+func (c *CelestiaDA) validateCertificate(ctx context.Context, certificate *cert.CelestiaDACertV1) (bool, error) {
+	if certificate == nil {
+		return false, nil
+	}
+
+	if certificate.SharesLength == 0 {
+		return false, nil
+	}
+
+	if bytes.Equal(certificate.TxCommitment[:], make([]byte, 32)) {
+		return false, nil
+	}
+
+	if bytes.Equal(certificate.DataRoot[:], make([]byte, 32)) {
+		return false, nil
+	}
+
+	header, err := c.ReadClient.Header.GetByHeight(ctx, certificate.BlockHeight)
+	if err != nil {
+		if isTransientError(err) {
+			return false, err
+		}
+		return false, nil
+	}
+
+	if !bytes.Equal(header.DataHash, certificate.DataRoot[:]) {
+		return false, nil
+	}
+
+	squareSize := uint64(len(header.DAH.RowRoots))
+	if squareSize == 0 {
+		return false, nil
+	}
+	odsSize := squareSize / 2
+	if odsSize == 0 {
+		return false, nil
+	}
+
+	if certificate.Start >= odsSize*odsSize {
+		return false, nil
+	}
+
+	if certificate.Start+certificate.SharesLength < 1 {
+		return false, nil
+	}
+
+	endIndexOds := certificate.Start + certificate.SharesLength - 1
+	if endIndexOds >= odsSize*odsSize {
+		return false, nil
+	}
+
+	blobData, err := c.ReadClient.Blob.Get(ctx, certificate.BlockHeight, *c.Namespace, certificate.TxCommitment[:])
+	if err != nil {
+		if isTransientError(err) {
+			return false, err
+		}
+		return false, nil
+	}
+	if blobData == nil {
+		return false, nil
+	}
+
+	length, err := blobData.Length()
+	if err != nil {
+		if isTransientError(err) {
+			return false, err
+		}
+		return false, nil
+	}
+	if length == 0 || uint64(length) != certificate.SharesLength {
+		return false, nil
+	}
+
+	blobIndex := uint64(blobData.Index())
+	startRow := blobIndex / squareSize
+	if odsSize*startRow > blobIndex {
+		return false, nil
+	}
+	startIndexOds := blobIndex - odsSize*startRow
+	if startIndexOds != certificate.Start {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout() || netErr.Temporary()
+	}
+	return false
 }
 
 func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {

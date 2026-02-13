@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "./DataRootTuple.sol";
-import "./tree/binary/BinaryMerkleTree.sol";
-import "./IBlobstreamX.sol";
+import "@celestia/lib/DataRootTuple.sol";
+import "@celestia/lib/tree/binary/BinaryMerkleTree.sol";
+import "@celestia/lib/IBlobstreamX.sol";
 
 contract Mockstream is IBlobstreamX {
     uint64 public latestBlock;

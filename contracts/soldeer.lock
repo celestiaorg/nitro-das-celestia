@@ -13,6 +13,13 @@ checksum = "57f2cae4b45b91b0847e58c36ea70aee0fb3212cc09b47279627f0764f87e5ee"
 integrity = "861134d6a3739362ce5ef6541538e23ca1df10ec47151f105057bea0bb710330"
 
 [[dependencies]]
+name = "blobstream-contracts"
+version = "3.1.0"
+url = "https://github.com/celestiaorg/blobstream-contracts/archive/refs/tags/v3.1.0.zip"
+checksum = "9d77e26e27e9e810fb23c877c8e87edeb41b72f7c1c35f94250a9438aecd0e3b"
+integrity = "1e8aab650bfd2d7259400e1ac70307a9e674500f90a198eaf62776dc0e4ed506"
+
+[[dependencies]]
 name = "forge-std"
 version = "1.7.6"
 url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_7_6_27-02-2024_19:21:42_forge-std-v1.7.6.zip"

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "./DataRootTuple.sol";
-import "./tree/binary/BinaryMerkleProof.sol";
+import "blobstream-contracts/DataRootTuple.sol";
+import "blobstream-contracts/lib/tree/binary/BinaryMerkleProof.sol";
 interface IBlobstreamX {
     /// @notice Contract is frozen.
     error ContractFrozen();

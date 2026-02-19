@@ -24,7 +24,6 @@ import (
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
-	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
@@ -166,8 +165,25 @@ type CelestiaDA struct {
 }
 
 func (c *CelestiaDA) MaxMessageSize(ctx context.Context) (int, error) {
-	// Celestia's max blob size is not exposed via ReadClient in v0.28.2.
-	// Use the default max blob size from the Celestia app constants.
+	// Prefer querying the live node via DA.MaxBlobSize so the value stays in
+	// sync with whatever the connected node / app version reports.
+	// c.Client is only set when WithWriter=true and ExperimentalTxClient=false;
+	// fall back to the compile-time constant for read-only or gRPC writer mode.
+	//
+	// TODO(future): This returns a single-blob limit. Consider making it
+	// dynamically computed to support:
+	//   - Multi-blob batches (batches larger than one blob, split across
+	//     multiple Celestia blobs and reassembled on read)
+	//   - FIBRE or other custom backends with different per-message limits
+	// Until then, the single-blob size reported by the connected node is the
+	// correct upper bound for a sequencer batch.
+	if c.Client != nil {
+		maxSize, err := c.Client.DA.MaxBlobSize(ctx)
+		if err == nil {
+			return int(maxSize), nil
+		}
+		log.Warn("DA.MaxBlobSize RPC failed, falling back to appconsts", "err", err)
+	}
 	return int(appconsts.DefaultMaxBytes), nil
 }
 
@@ -862,18 +878,9 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		_, allProofs := merkle.ProofsFromByteSlices(append(header.DAH.RowRoots, header.DAH.ColumnRoots...))
 		rowProof := toRowProofs(allProofs[startRow])
 		namespaceNode := toNamespaceNode(rowRoot)
-		attestationProof := toAttestationProof(event.ProofNonce.Uint64(), blobPointer.BlockHeight, blobPointer.DataRoot, dataRootProof)
+		attestationProof := toAttestationProof(event.ProofNonce.Uint64(), blobPointer.BlockHeight, [32]byte(header.DataHash), dataRootProof)
 
-		celestiaVerifierAbi, err := celestiagen.CelestiaBatchVerifierMetaData.GetAbi()
-		if err != nil {
-			celestiaValidationFailureCounter.Inc(1)
-			log.Error("Could not get ABI for Celestia Batch Verifier", "err", err)
-			return nil, err
-		}
-
-		verifyProofABI := celestiaVerifierAbi.Methods["verifyProof"]
-
-		proofData, err := verifyProofABI.Inputs.Pack(
+		proofData, err := packBlobstreamProof(
 			common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), namespaceNode, rowProof, attestationProof,
 		)
 		if err != nil {
@@ -1003,15 +1010,37 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 	}
 
 	preimage := readResult.Message
-	if offset+32 > uint64(len(preimage)) {
-		return nil, fmt.Errorf("offset out of bounds")
+	if offset >= uint64(len(preimage)) {
+		return nil, fmt.Errorf("offset out of bounds: offset %d >= preimage length %d", offset, len(preimage))
 	}
 
-	proof := make([]byte, 1+8+len(preimage)+len(proofData))
-	proof[0] = 0x01
-	binary.BigEndian.PutUint64(proof[1:9], uint64(len(preimage)))
-	copy(proof[9:], preimage)
-	copy(proof[9+len(preimage):], proofData)
+	certBytes, err := certificate.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal certificate: %w", err)
+	}
+
+	// Proof layout expected by CelestiaDAProofValidator.validateReadPreimage:
+	//   [certSize(8 bytes big-endian)][certificate][version(1)=0x01][preimageSize(8 bytes big-endian)][preimage][blobstreamProofData]
+	totalLen := 8 + len(certBytes) + 1 + 8 + len(preimage) + len(proofData)
+	proof := make([]byte, totalLen)
+	pos := 0
+
+	binary.BigEndian.PutUint64(proof[pos:], uint64(len(certBytes)))
+	pos += 8
+
+	copy(proof[pos:], certBytes)
+	pos += len(certBytes)
+
+	proof[pos] = 0x01 // proof version
+	pos++
+
+	binary.BigEndian.PutUint64(proof[pos:], uint64(len(preimage)))
+	pos += 8
+
+	copy(proof[pos:], preimage)
+	pos += len(preimage)
+
+	copy(proof[pos:], proofData)
 
 	return proof, nil
 }
@@ -1019,13 +1048,28 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
 	valid, err := c.validateCertificate(ctx, certificate)
 	if err != nil {
+		// Return transient errors to the caller so the RPC layer can distinguish
+		// them from a definitive invalidity signal.
 		return nil, err
 	}
-	if !valid {
-		return []byte{0}, nil
+
+	certBytes, err := certificate.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal certificate: %w", err)
 	}
 
-	return []byte{1}, nil
+	// Proof layout expected by CelestiaDAProofValidator.validateCertificate:
+	//   [certSize(8 bytes big-endian)][certificate][claimedValid(1 byte)]
+	//   claimedValid = 0x01 if the blob is live on Celestia, 0x00 otherwise.
+	proof := make([]byte, 8+len(certBytes)+1)
+	binary.BigEndian.PutUint64(proof[:8], uint64(len(certBytes)))
+	copy(proof[8:], certBytes)
+	if valid {
+		proof[8+len(certBytes)] = 0x01
+	} else {
+		proof[8+len(certBytes)] = 0x00
+	}
+	return proof, nil
 }
 
 func validateReadResult(result *types.ReadResult, certificate *cert.CelestiaDACertV1) error {
@@ -1290,18 +1334,25 @@ func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cer
 	_, allProofs := merkle.ProofsFromByteSlices(append(header.DAH.RowRoots, header.DAH.ColumnRoots...))
 	rowProof := toRowProofs(allProofs[startRow])
 	namespaceNode := toNamespaceNode(rowRoot)
-	attestationProof := toAttestationProof(event.ProofNonce.Uint64(), certificate.BlockHeight, certificate.DataRoot, dataRootProof)
+	attestationProof := toAttestationProof(event.ProofNonce.Uint64(), certificate.BlockHeight, [32]byte(header.DataHash), dataRootProof)
 
-	celestiaVerifierAbi, err := celestiagen.CelestiaBatchVerifierMetaData.GetAbi()
-	if err != nil {
-		celestiaValidationFailureCounter.Inc(1)
-		log.Error("Could not get ABI for Celestia Batch Verifier", "err", err)
-		return nil, err
-	}
-
-	verifyProofABI := celestiaVerifierAbi.Methods["verifyProof"]
-
-	proofData, err := verifyProofABI.Inputs.Pack(
+	// Byte-layout audit: packBlobstreamProof ABI-encodes the four arguments that
+	// CelestiaDAProofValidator._requireBlobstreamProof expects via abi.decode:
+	//
+	//   abi.encode(address, NamespaceNode, BinaryMerkleProof, AttestationProof)
+	//
+	// After decoding, _requireBlobstreamProof ignores the decoded address and
+	// uses its immutable blobstreamX instead (security hardening).  The decoded
+	// namespaceNode, rowProof, and attestationProof are forwarded to:
+	//
+	//   DAVerifier.verifyRowRootToDataRootTupleRoot(
+	//       IDAOracle(blobstreamX),
+	//       namespaceNode,
+	//       rowProof,
+	//       attestationProof,
+	//       attestationProof.tuple.dataRoot
+	//   )
+	proofData, err := packBlobstreamProof(
 		common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), namespaceNode, rowProof, attestationProof,
 	)
 	if err != nil {
@@ -1309,15 +1360,6 @@ func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cer
 		log.Error("Could not pack structs into ABI", "err", err)
 		return nil, err
 	}
-
-	serializedBatch := make([]byte, 88)
-	binary.BigEndian.PutUint64(serializedBatch[0:8], certificate.BlockHeight)
-	binary.BigEndian.PutUint64(serializedBatch[8:16], certificate.Start)
-	binary.BigEndian.PutUint64(serializedBatch[16:24], certificate.SharesLength)
-	copy(serializedBatch[24:56], certificate.TxCommitment[:])
-	copy(serializedBatch[56:88], certificate.DataRoot[:])
-
-	proofData = append(serializedBatch, proofData...)
 
 	celestiaValidationSuccessCounter.Inc(1)
 	celestiaValidationLastSuccesfulActionGauge.Update(time.Now().Unix())

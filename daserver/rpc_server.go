@@ -86,11 +86,9 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 		return nil, err
 	}
 
-	var dataStreamReceiver *data_streaming.DataStreamReceiver
-	if celestiaWriter != nil {
-		dataStreamReceiver = data_streaming.NewDefaultDataStreamReceiver(data_streaming.PayloadCommitmentVerifier())
-		dataStreamReceiver.Start(ctx)
-	}
+	// celestiaWriter is guaranteed non-nil here (early return above handles nil).
+	dataStreamReceiver := data_streaming.NewDefaultDataStreamReceiver(data_streaming.PayloadCommitmentVerifier())
+	dataStreamReceiver.Start(ctx)
 
 	// // NOTICE: DA VALIDATOR NOT IMPLEMENTED
 	// // Currently the server will handle any da proofs through the GetProof call established in the celestia nitro integration

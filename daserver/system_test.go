@@ -2,6 +2,8 @@ package das
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
@@ -243,4 +246,176 @@ func TestCelestiaIntegration(t *testing.T) {
 			require.NotEqual(t, firstStore, thirdStore)
 		}
 	})
+
+	t.Run("Multiple Messages With Binary Payload", func(t *testing.T) {
+		payloads := [][]byte{
+			[]byte("alpha: " + time.Now().Format(time.RFC3339Nano)),
+			[]byte("beta: the quick brown fox jumps over the lazy dog"),
+			make([]byte, 256), // binary blob
+		}
+		// fill binary blob with a repeating byte pattern
+		for i := range payloads[2] {
+			payloads[2][i] = byte(i % 256)
+		}
+
+		for i, msg := range payloads {
+			t.Run(fmt.Sprintf("blob_%d", i), func(t *testing.T) {
+				var certBytes []byte
+				err := client.Call(&certBytes, "celestia_store", hexutil.Bytes(msg))
+				require.NoError(t, err, "store failed for blob %d", i)
+				require.Len(t, certBytes, cert.CelestiaDACertV1Len)
+
+				parsedCert := &cert.CelestiaDACertV1{}
+				require.NoError(t, parsedCert.UnmarshalBinary(certBytes))
+
+				var result types.ReadResult
+				err = client.Call(&result, "celestia_read", parsedCert)
+				require.NoError(t, err, "read failed for blob %d", i)
+				require.Equal(t, msg, result.Message, "payload mismatch for blob %d", i)
+			})
+		}
+	})
+}
+
+// TestDAProviderAPI exercises the daprovider_* namespace:
+// store via celestia_store, then recover via daprovider_recoverPayload.
+func TestDAProviderAPI(t *testing.T) {
+	_, endpoint, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	client, err := rpc.Dial(endpoint)
+	require.NoError(t, err)
+	defer client.Close()
+
+	message := []byte("daprovider api test " + time.Now().Format(time.RFC3339Nano))
+
+	// Store using the celestia namespace
+	var certBytes []byte
+	err = client.Call(&certBytes, "celestia_store", hexutil.Bytes(message))
+	require.NoError(t, err, "celestia_store failed")
+	require.Len(t, certBytes, cert.CelestiaDACertV1Len)
+
+	t.Logf("Stored cert: 0x%s", hex.EncodeToString(certBytes))
+
+	// Build a synthetic sequencer message: 40-byte header + cert bytes.
+	// The daserver reads the cert starting at offset 40 (cert.SequencerMsgOffset).
+	seqHeader := make([]byte, 40)
+	seqHeader[40-2] = cert.CustomDAHeaderFlag        // byte[38]
+	seqHeader[40-1] = cert.CelestiaMessageHeaderFlag // byte[39]
+	seqMsg := append(seqHeader, certBytes...)
+
+	type PayloadResult struct {
+		Payload []byte `json:"Payload"`
+	}
+	var payloadResult PayloadResult
+	err = client.Call(
+		&payloadResult,
+		"daprovider_recoverPayload",
+		hexutil.Uint64(1),     // batchNum
+		common.Hash{},         // batchBlockHash (zero hash)
+		hexutil.Bytes(seqMsg), // sequencerMsg
+	)
+	require.NoError(t, err, "daprovider_recoverPayload failed")
+	require.Equal(t, message, []byte(payloadResult.Payload), "recovered payload mismatch")
+
+	t.Logf("daprovider_recoverPayload returned %d bytes: %q", len(payloadResult.Payload), payloadResult.Payload)
+}
+
+// TestGenerateCertificateValidityProof stores a blob and calls
+// daprovider_generateCertificateValidityProof, verifying the proof claims valid.
+func TestGenerateCertificateValidityProof(t *testing.T) {
+	_, endpoint, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	client, err := rpc.Dial(endpoint)
+	require.NoError(t, err)
+	defer client.Close()
+
+	message := []byte("validity proof test " + time.Now().Format(time.RFC3339Nano))
+
+	var certBytes []byte
+	err = client.Call(&certBytes, "celestia_store", hexutil.Bytes(message))
+	require.NoError(t, err, "celestia_store failed")
+
+	type ValidityProofResult struct {
+		Proof hexutil.Bytes `json:"Proof"`
+	}
+	var result ValidityProofResult
+	err = client.Call(
+		&result,
+		"daprovider_generateCertificateValidityProof",
+		hexutil.Bytes(certBytes),
+	)
+	require.NoError(t, err, "daprovider_generateCertificateValidityProof failed")
+	require.NotEmpty(t, result.Proof, "validity proof must not be empty")
+
+	// First byte: 0x01 = claimed valid, 0x00 = invalid
+	claimedValid := result.Proof[0]
+	t.Logf("Validity proof (%d bytes): claimedValid=0x%02x", len(result.Proof), claimedValid)
+	require.Equal(t, byte(0x01), claimedValid, "cert should be claimed valid")
+}
+
+// TestReadInvalidCertFastFail verifies that reading a cert with a bogus block
+// height returns an error quickly using a minimal retry config.
+func TestReadInvalidCertFastFail(t *testing.T) {
+	authToken := getAuthToken(t, "mocha")
+	namespaceID := os.Getenv("NAMESPACE")
+	if namespaceID == "" {
+		namespaceID = "000008e5f679bf7116cb"
+	}
+
+	fastFail := RetryBackoffConfig{
+		MaxRetries:     1,
+		InitialBackoff: 500 * time.Millisecond,
+		MaxBackoff:     1 * time.Second,
+		BackoffFactor:  1.0,
+	}
+
+	cfg := &DAConfig{
+		Rpc:              "http://localhost:26658",
+		NamespaceId:      namespaceID,
+		AuthToken:        authToken,
+		CacheCleanupTime: time.Minute,
+		WithWriter:       true,
+		RetryConfig:      fastFail,
+	}
+
+	celestiaDA, err := NewCelestiaDA(cfg)
+	require.NoError(t, err)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	timeouts := genericconf.HTTPServerTimeoutConfig{
+		ReadTimeout:       5 * time.Minute,
+		ReadHeaderTimeout: 5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       5 * time.Minute,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	server, err := StartCelestiaDASRPCServerOnListener(ctx, listener, timeouts, 1024*1024*2, celestiaDA, celestiaDA)
+	require.NoError(t, err)
+	defer func() {
+		cancel()
+		server.Close()
+		celestiaDA.Stop()
+	}()
+
+	client, err := rpc.Dial("http://" + listener.Addr().String())
+	require.NoError(t, err)
+	defer client.Close()
+
+	badCert := cert.NewCelestiaCertificate(
+		999_999_999, // block height far in the future
+		0,
+		1,
+		[32]byte{0xde, 0xad, 0xbe, 0xef},
+		[32]byte{0xca, 0xfe, 0xba, 0xbe},
+	)
+
+	var readResult types.ReadResult
+	err = client.Call(&readResult, "celestia_read", badCert)
+	require.Error(t, err, "reading an invalid cert should return an error")
+	t.Logf("invalid cert correctly returned error: %v", err)
 }

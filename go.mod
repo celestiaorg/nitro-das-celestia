@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/celestiaorg/aws-kms-keyring v0.4.0
+	github.com/celestiaorg/celestia-app/v6 v6.4.10
 	github.com/celestiaorg/celestia-node v0.29.1-mocha
 	github.com/celestiaorg/go-square/v3 v3.0.2
 	github.com/cometbft/cometbft v0.38.17
@@ -58,7 +59,6 @@ require (
 	github.com/aws/smithy-go v1.24.0 // indirect
 	github.com/bcp-innovations/hyperlane-cosmos v1.1.0 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/bufbuild/protocompile v0.14.1 // indirect
 	github.com/celestiaorg/celestia-app/v7 v7.0.2-mocha // indirect
 	github.com/celestiaorg/go-square/v2 v2.3.3 // indirect
 	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
@@ -75,7 +75,7 @@ require (
 	github.com/emicklei/dot v1.6.2 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.36.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.0 // indirect
-	github.com/ethereum/c-kzg-4844/v2 v2.1.3 // indirect
+	github.com/ethereum/c-kzg-4844/v2 v2.1.5 // indirect
 	github.com/ethereum/go-bigmodexpfix v0.0.0-20250911101455-f9e208c548ab // indirect
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/fatih/color v1.18.0 // indirect
@@ -96,7 +96,6 @@ require (
 	github.com/huandu/skiplist v1.2.1 // indirect
 	github.com/iancoleman/strcase v0.3.0 // indirect
 	github.com/ingonyama-zk/icicle-gnark/v3 v3.2.2 // indirect
-	github.com/magiconair/properties v1.8.9 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20230904125328-1f23a7beb09a // indirect
 	github.com/offchainlabs/nitro/solgen/go/bridgegen v0.0.0-00010101000000-000000000000 // indirect
 	github.com/oklog/run v1.1.0 // indirect

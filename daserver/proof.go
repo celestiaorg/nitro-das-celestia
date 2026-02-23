@@ -120,28 +120,58 @@ func toAttestationProof(
 var blobstreamProofArgs = abi.Arguments{
 	{
 		Name: "_blobstream",
-		Type: mustABIType("address"),
+		Type: mustABIType("address", nil),
 	},
 	{
+		// NamespaceNode: (Namespace min, Namespace max, bytes32 digest)
+		// Namespace: (bytes1 version, bytes28 id)
 		Name: "_rowRoot",
-		Type: mustABIType("(bytes1,bytes28,bytes1,bytes28,bytes32)"),
+		Type: mustABIType("tuple", []abi.ArgumentMarshaling{
+			{Name: "min", Type: "tuple", Components: []abi.ArgumentMarshaling{
+				{Name: "version", Type: "bytes1"},
+				{Name: "id", Type: "bytes28"},
+			}},
+			{Name: "max", Type: "tuple", Components: []abi.ArgumentMarshaling{
+				{Name: "version", Type: "bytes1"},
+				{Name: "id", Type: "bytes28"},
+			}},
+			{Name: "digest", Type: "bytes32"},
+		}),
 	},
 	{
+		// BinaryMerkleProof: (bytes32[] sideNodes, uint256 key, uint256 numLeaves)
 		Name: "_rowProof",
-		Type: mustABIType("(bytes32[],uint256,uint256)"),
+		Type: mustABIType("tuple", []abi.ArgumentMarshaling{
+			{Name: "sideNodes", Type: "bytes32[]"},
+			{Name: "key", Type: "uint256"},
+			{Name: "numLeaves", Type: "uint256"},
+		}),
 	},
 	{
+		// AttestationProof: (uint256 tupleRootNonce, DataRootTuple tuple, BinaryMerkleProof proof)
+		// DataRootTuple: (uint256 height, bytes32 dataRoot)
 		Name: "_attestationProof",
-		Type: mustABIType("(uint256,(uint256,bytes32),(bytes32[],uint256,uint256))"),
+		Type: mustABIType("tuple", []abi.ArgumentMarshaling{
+			{Name: "tupleRootNonce", Type: "uint256"},
+			{Name: "tuple", Type: "tuple", Components: []abi.ArgumentMarshaling{
+				{Name: "height", Type: "uint256"},
+				{Name: "dataRoot", Type: "bytes32"},
+			}},
+			{Name: "proof", Type: "tuple", Components: []abi.ArgumentMarshaling{
+				{Name: "sideNodes", Type: "bytes32[]"},
+				{Name: "key", Type: "uint256"},
+				{Name: "numLeaves", Type: "uint256"},
+			}},
+		}),
 	},
 }
 
-func mustABIType(s string) abi.Type {
-	t, err := abi.NewType(s, "", nil)
+func mustABIType(t string, components []abi.ArgumentMarshaling) abi.Type {
+	typ, err := abi.NewType(t, "", components)
 	if err != nil {
-		panic("invalid ABI type: " + s)
+		panic("invalid ABI type: " + t)
 	}
-	return t
+	return typ
 }
 
 // packBlobstreamProof ABI-encodes the four arguments that

@@ -182,12 +182,12 @@ func certFromEnv(t *testing.T, celestiaDA *CelestiaDA) *cert.CelestiaDACertV1 {
 //	[preimage  (preimSize bytes)           ]
 //	[blobstreamProofData (remainder)       ]
 type parsedReadPreimageProof struct {
-	certSize         uint64
-	certificate      []byte
-	version          byte
-	preimageSize     uint64
-	preimage         []byte
-	blobstreamProof  []byte
+	certSize        uint64
+	certificate     []byte
+	version         byte
+	preimageSize    uint64
+	preimage        []byte
+	blobstreamProof []byte
 }
 
 func parseReadPreimageProof(t *testing.T, proof []byte) parsedReadPreimageProof {
@@ -314,8 +314,8 @@ func TestGenerateCertificateValidityProof_MalformedCert(t *testing.T) {
 	malformed[0] = 0xAA // not CustomDAHeaderFlag
 	malformed[1] = cert.CelestiaMessageHeaderFlag
 	binary.BigEndian.PutUint16(malformed[2:4], uint16(cert.CelestiaCertVersion))
-	binary.BigEndian.PutUint64(malformed[4:12], 12345)  // non-zero blockHeight
-	binary.BigEndian.PutUint64(malformed[20:28], 1)      // non-zero sharesLength
+	binary.BigEndian.PutUint64(malformed[4:12], 12345) // non-zero blockHeight
+	binary.BigEndian.PutUint64(malformed[20:28], 1)    // non-zero sharesLength
 
 	var result server_api.GenerateCertificateValidityProofResult
 	err := client.Call(&result, "daprovider_generateCertificateValidityProof", hexutil.Bytes(malformed))
@@ -338,6 +338,7 @@ func TestGenerateCertificateValidityProof_MalformedCert(t *testing.T) {
 // Required env vars (in addition to NAMESPACE):
 //
 //	HEIGHT, COMMITMENT, BLOB_DATA  (same as blobstream_test.go)
+//
 // ---------------------------------------------------------------------------
 func TestGenerateCertificateValidityProof_ValidCert(t *testing.T) {
 	celestiaDA, client, cleanup := setupValidatorTest(t)
@@ -473,6 +474,7 @@ func TestGenerateReadPreimageProof_Structure(t *testing.T) {
 //   - The certificate is the same across all offsets (it's embedded per-call)
 //   - The preimage is identical across all offsets (the full payload is always
 //     embedded; the offset only affects what the Solidity contract returns)
+//
 // ---------------------------------------------------------------------------
 func TestGenerateReadPreimageProof_MultipleOffsets(t *testing.T) {
 	celestiaDA, client, cleanup := setupValidatorTest(t)
@@ -610,10 +612,10 @@ func TestGenerateReadPreimageProof_MismatchedOffsetAlignment(t *testing.T) {
 // A pure unit-level structural test (no live node required) that verifies the
 // byte layout constants are internally consistent:
 //
-//   cert.CelestiaDACertV1Len == 92
-//   MarshalBinary produces exactly 92 bytes
-//   parseReadPreimageProof correctly extracts every section from a
-//   hand-constructed byte slice
+//	cert.CelestiaDACertV1Len is stable
+//	MarshalBinary produces exactly cert.CelestiaDACertV1Len bytes
+//	parseReadPreimageProof correctly extracts every section from a
+//	hand-constructed byte slice
 //
 // This test runs without any environment variables.
 // ---------------------------------------------------------------------------
@@ -624,15 +626,15 @@ func TestValidatorProofLayout_ByteAudit(t *testing.T) {
 	require.Equal(t, 92, cert.CelestiaDACertV1Len, "CelestiaDACertV1Len must be 92")
 
 	fakeCert := cert.NewCelestiaCertificate(
-		42,    // blockHeight
-		3,     // start
-		8,     // sharesLength
+		42, // blockHeight
+		3,  // start
+		8,  // sharesLength
 		[32]byte{0xAB},
 		[32]byte{0xCD},
 	)
 	certBytes, err := fakeCert.MarshalBinary()
 	require.NoError(t, err)
-	require.Len(t, certBytes, 92, "MarshalBinary must produce exactly 92 bytes")
+	require.Len(t, certBytes, cert.CelestiaDACertV1Len, "MarshalBinary length mismatch")
 
 	// Spot-check the header bytes.
 	require.Equal(t, cert.CustomDAHeaderFlag, certBytes[0])
@@ -644,8 +646,8 @@ func TestValidatorProofLayout_ByteAudit(t *testing.T) {
 	preimage := []byte("the quick brown fox jumps over the lazy dog --- some extra padding --")
 	fakeProofData := []byte("ABI-ENCODED-BLOBSTREAM-PROOF-PLACEHOLDER")
 
-	// Build: [certSize(8)][certificate(92)][version(1)][preimageSize(8)][preimage][proofData]
-	hand := make([]byte, 8+92+1+8+len(preimage)+len(fakeProofData))
+	// Build: [certSize(8)][certificate][version(1)][preimageSize(8)][preimage][proofData]
+	hand := make([]byte, 8+len(certBytes)+1+8+len(preimage)+len(fakeProofData))
 	pos := 0
 	binary.BigEndian.PutUint64(hand[pos:], uint64(len(certBytes)))
 	pos += 8
@@ -661,7 +663,7 @@ func TestValidatorProofLayout_ByteAudit(t *testing.T) {
 
 	p := parseReadPreimageProof(t, hand)
 
-	require.EqualValues(t, 92, p.certSize)
+	require.EqualValues(t, cert.CelestiaDACertV1Len, p.certSize)
 	require.Equal(t, certBytes, p.certificate)
 	require.EqualValues(t, 0x01, p.version)
 	require.EqualValues(t, uint64(len(preimage)), p.preimageSize)
@@ -671,21 +673,21 @@ func TestValidatorProofLayout_ByteAudit(t *testing.T) {
 	// ------------------------------------------------------------------
 	// 3. Hand-build a validity proof and verify parseValidityProof.
 	// ------------------------------------------------------------------
-	validHand := make([]byte, 8+92+1)
+	validHand := make([]byte, 8+cert.CelestiaDACertV1Len+1)
 	binary.BigEndian.PutUint64(validHand[:8], uint64(len(certBytes)))
 	copy(validHand[8:], certBytes)
-	validHand[8+92] = 0x01
+	validHand[8+cert.CelestiaDACertV1Len] = 0x01
 
 	vp := parseValidityProof(t, validHand)
-	require.EqualValues(t, 92, vp.certSize)
+	require.EqualValues(t, cert.CelestiaDACertV1Len, vp.certSize)
 	require.Equal(t, certBytes, vp.certificate)
 	require.EqualValues(t, 0x01, vp.claimedValid)
 
 	// And for the invalid case.
-	invalidHand := make([]byte, 8+92+1)
+	invalidHand := make([]byte, 8+cert.CelestiaDACertV1Len+1)
 	binary.BigEndian.PutUint64(invalidHand[:8], uint64(len(certBytes)))
 	copy(invalidHand[8:], certBytes)
-	invalidHand[8+92] = 0x00
+	invalidHand[8+cert.CelestiaDACertV1Len] = 0x00
 
 	ivp := parseValidityProof(t, invalidHand)
 	require.EqualValues(t, 0x00, ivp.claimedValid)

@@ -37,7 +37,7 @@ func (v *CelestiaValidator) GenerateCertificateValidityProof(certificate []byte)
 	return containers.DoPromise(context.Background(), func(ctx context.Context) (daprovider.ValidityProofResult, error) {
 		parsed := &cert.CelestiaDACertV1{}
 		if err := parsed.UnmarshalBinary(certificate); err != nil {
-			return daprovider.ValidityProofResult{Proof: []byte{0}}, nil
+			return daprovider.ValidityProofResult{Proof: []byte{0, 0x01}}, nil
 		}
 
 		proof, err := v.reader.GenerateCertificateValidityProof(ctx, parsed)

@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "blobstream-contracts/IDAOracle.sol";
-import "blobstream-contracts/DataRootTuple.sol";
-import "blobstream-contracts/lib/tree/binary/BinaryMerkleProof.sol";
-import "blobstream-contracts/lib/tree/binary/BinaryMerkleTree.sol";
-import "../../lib/IBlobstreamX.sol";
+import "../../lib/IDAOracle.sol";
+import "../../lib/DataRootTuple.sol";
+import "../../lib/tree/binary/BinaryMerkleProof.sol";
+import "../../lib/tree/binary/BinaryMerkleTree.sol";
 
 /// @notice Mock Blobstream contract for testing CelestiaDAProofValidator.
-/// Implements both IDAOracle (verifyAttestation) and IBlobstreamX (latestBlock)
-/// so it can be used as a drop-in for the validator contract.
-contract MockBlobstream is IDAOracle, IBlobstreamX {
-    uint64 public override latestBlock;
-    uint256 public override state_proofNonce;
-    mapping(uint256 => bytes32) public override state_dataCommitments;
-    bool public override frozen;
+contract MockBlobstream is IDAOracle {
+    error ContractFrozen();
+    event DataCommitmentStored(
+        uint256 indexed proofNonce,
+        uint64 indexed startBlock,
+        uint64 indexed endBlock,
+        bytes32 dataCommitment
+    );
+
+    uint64 public latestBlock;
+    uint256 public state_proofNonce;
+    mapping(uint256 => bytes32) public state_dataCommitments;
+    bool public frozen;
 
     function initialize(uint64 _latestBlock) external {
         frozen = false;
@@ -52,11 +57,12 @@ contract MockBlobstream is IDAOracle, IBlobstreamX {
         uint256 _proofNonce,
         DataRootTuple memory _tuple,
         BinaryMerkleProof memory _proof
-    ) external view override(IDAOracle, IBlobstreamX) returns (bool) {
+    ) external view override returns (bool) {
         if (frozen) revert ContractFrozen();
         if (_proofNonce == 0 || _proofNonce >= state_proofNonce) return false;
 
         bytes32 root = state_dataCommitments[_proofNonce];
-        return BinaryMerkleTree.verify(root, _proof, abi.encode(_tuple));
+        (bool ok, ) = BinaryMerkleTree.verify(root, _proof, abi.encode(_tuple));
+        return ok;
     }
 }

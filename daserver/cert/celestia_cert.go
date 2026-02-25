@@ -32,7 +32,13 @@ type CelestiaDACertV1 struct {
 	DataRoot     [32]byte
 }
 
-func NewCelestiaCertificate(blockHeight, start, sharesLength uint64, txCommitment, dataRoot [32]byte) *CelestiaDACertV1 {
+func NewCelestiaCertificate(
+	blockHeight uint64,
+	start uint64,
+	sharesLength uint64,
+	txCommitment [32]byte,
+	dataRoot [32]byte,
+) *CelestiaDACertV1 {
 	return &CelestiaDACertV1{
 		BlockHeight:  blockHeight,
 		Start:        start,

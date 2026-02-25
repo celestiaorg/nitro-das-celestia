@@ -57,7 +57,7 @@ func TestCelestiaDACertV1_GoldenEncoding(t *testing.T) {
 
 	// Verify exact encoding for known values
 	got := hex.EncodeToString(data)
-	// header(01) + provider(63) + version(0001) + height(1) + start(2) + len(3) + commitment(32 zeros) + dataroot(32 zeros)
+	// header(01) + provider(63) + version(0001) + height(1) + start(2) + len(3) + commitment + dataroot
 	want := "01630001" + "0000000000000001" + "0000000000000002" + "0000000000000003" +
 		"0000000000000000000000000000000000000000000000000000000000000000" +
 		"0000000000000000000000000000000000000000000000000000000000000000"

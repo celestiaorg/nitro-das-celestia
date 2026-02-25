@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"math/rand"
 	"net"
@@ -17,6 +18,7 @@ import (
 
 	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	"github.com/celestiaorg/celestia-app/v6/pkg/appconsts"
+	pkgproof "github.com/celestiaorg/celestia-app/v6/pkg/proof"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -436,7 +438,6 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	// Create hash of message to use as cache key
 	msgHash := crypto.Keccak256(message)
 	msgHashHex := hex.EncodeToString(msgHash)
-
 	// Check cache first
 	if pointer, ok := c.messageCache.Load(msgHashHex); ok {
 		log.Info("Retrieved blob pointer from cache", "msgHash", msgHashHex)
@@ -1013,35 +1014,19 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 	if offset >= uint64(len(preimage)) {
 		return nil, fmt.Errorf("offset out of bounds: offset %d >= preimage length %d", offset, len(preimage))
 	}
-
-	certBytes, err := certificate.MarshalBinary()
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal certificate: %w", err)
-	}
-
-	// Proof layout expected by CelestiaDAProofValidator.validateReadPreimage:
-	//   [certSize(8 bytes big-endian)][certificate][version(1)=0x01][preimageSize(8 bytes big-endian)][preimage][blobstreamProofData]
-	totalLen := 8 + len(certBytes) + 1 + 8 + len(preimage) + len(proofData)
+	// Custom proof format (proof enhancer prepends cert metadata at challenge time):
+	// [version(1)=0x01][preimageSize(8)][preimage][celestiaSharesProofData]
+	totalLen := 1 + 8 + len(preimage) + len(proofData)
 	proof := make([]byte, totalLen)
 	pos := 0
 
-	binary.BigEndian.PutUint64(proof[pos:], uint64(len(certBytes)))
-	pos += 8
-
-	copy(proof[pos:], certBytes)
-	pos += len(certBytes)
-
-	proof[pos] = 0x01 // proof version
+	proof[pos] = 0x01
 	pos++
-
 	binary.BigEndian.PutUint64(proof[pos:], uint64(len(preimage)))
 	pos += 8
-
 	copy(proof[pos:], preimage)
 	pos += len(preimage)
-
 	copy(proof[pos:], proofData)
-
 	return proof, nil
 }
 
@@ -1053,22 +1038,15 @@ func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certi
 		return nil, err
 	}
 
-	certBytes, err := certificate.MarshalBinary()
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal certificate: %w", err)
-	}
-
-	// Proof layout expected by CelestiaDAProofValidator.validateCertificate:
-	//   [certSize(8 bytes big-endian)][certificate][claimedValid(1 byte)]
-	//   claimedValid = 0x01 if the blob is live on Celestia, 0x00 otherwise.
-	proof := make([]byte, 8+len(certBytes)+1)
-	binary.BigEndian.PutUint64(proof[:8], uint64(len(certBytes)))
-	copy(proof[8:], certBytes)
+	// Custom validity proof format:
+	// [claimedValid(1)][version(1)=0x01]
+	proof := make([]byte, 2)
 	if valid {
-		proof[8+len(certBytes)] = 0x01
+		proof[0] = 0x01
 	} else {
-		proof[8+len(certBytes)] = 0x00
+		proof[0] = 0x00
 	}
+	proof[1] = 0x01
 	return proof, nil
 }
 
@@ -1114,7 +1092,6 @@ func validateReadResult(result *types.ReadResult, certificate *cert.CelestiaDACe
 	if !bytes.Equal(dataRoot, certificate.DataRoot[:]) {
 		return fmt.Errorf("data root mismatch")
 	}
-
 	return nil
 }
 
@@ -1134,7 +1111,6 @@ func (c *CelestiaDA) validateCertificate(ctx context.Context, certificate *cert.
 	if bytes.Equal(certificate.DataRoot[:], make([]byte, 32)) {
 		return false, nil
 	}
-
 	header, err := c.ReadClient.Header.GetByHeight(ctx, certificate.BlockHeight)
 	if err != nil {
 		if isTransientError(err) {
@@ -1190,7 +1166,6 @@ func (c *CelestiaDA) validateCertificate(ctx context.Context, certificate *cert.
 	if length == 0 || uint64(length) != certificate.SharesLength {
 		return false, nil
 	}
-
 	blobIndex := uint64(blobData.Index())
 	startRow := blobIndex / squareSize
 	if odsSize*startRow > blobIndex {
@@ -1317,47 +1292,75 @@ func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cer
 		return nil, nil
 	}
 
-	squareSize := uint64(len(header.DAH.RowRoots))
-	odsSize := squareSize / 2
-	if odsSize == 0 {
-		return nil, fmt.Errorf("invalid ods size")
-	}
-	if certificate.Start >= odsSize*odsSize {
-		return nil, fmt.Errorf("start index out of bounds")
-	}
-	startRow := certificate.Start / odsSize
-	if startRow >= uint64(len(header.DAH.RowRoots)) {
-		return nil, fmt.Errorf("row index out of bounds")
-	}
-
-	rowRoot := header.DAH.RowRoots[startRow]
-	_, allProofs := merkle.ProofsFromByteSlices(append(header.DAH.RowRoots, header.DAH.ColumnRoots...))
-	rowProof := toRowProofs(allProofs[startRow])
-	namespaceNode := toNamespaceNode(rowRoot)
 	attestationProof := toAttestationProof(event.ProofNonce.Uint64(), certificate.BlockHeight, [32]byte(header.DataHash), dataRootProof)
 
-	// Byte-layout audit: packBlobstreamProof ABI-encodes the four arguments that
-	// CelestiaDAProofValidator._requireBlobstreamProof expects via abi.decode:
-	//
-	//   abi.encode(address, NamespaceNode, BinaryMerkleProof, AttestationProof)
-	//
-	// After decoding, _requireBlobstreamProof ignores the decoded address and
-	// uses its immutable blobstreamX instead (security hardening).  The decoded
-	// namespaceNode, rowProof, and attestationProof are forwarded to:
-	//
-	//   DAVerifier.verifyRowRootToDataRootTupleRoot(
-	//       IDAOracle(blobstreamX),
-	//       namespaceNode,
-	//       rowProof,
-	//       attestationProof,
-	//       attestationProof.tuple.dataRoot
-	//   )
-	proofData, err := packBlobstreamProof(
-		common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), namespaceNode, rowProof, attestationProof,
+	eds, err := c.ReadClient.Share.GetEDS(ctx, certificate.BlockHeight)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, fmt.Errorf("failed to fetch EDS for share inclusion proof: %w", err)
+	}
+
+	shareStart := certificate.Start
+	shareEnd := certificate.Start + certificate.SharesLength
+	if shareEnd <= shareStart {
+		return nil, fmt.Errorf("invalid share range")
+	}
+	if shareEnd > uint64(math.MaxInt) {
+		return nil, fmt.Errorf("share range exceeds supported int size")
+	}
+
+	shareProof, err := pkgproof.NewShareInclusionProofFromEDS(
+		eds,
+		*c.Namespace,
+		libshare.NewRange(int(shareStart), int(shareEnd)),
 	)
 	if err != nil {
 		celestiaValidationFailureCounter.Inc(1)
-		log.Error("Could not pack structs into ABI", "err", err)
+		return nil, fmt.Errorf("failed to build share inclusion proof: %w", err)
+	}
+	if shareProof.RowProof == nil {
+		return nil, fmt.Errorf("share inclusion proof missing row proof")
+	}
+
+	var nsID [28]byte
+	copy(nsID[:], shareProof.NamespaceId)
+	sharesProof := SharesProof{
+		Data:        shareProof.Data,
+		ShareProofs: make([]NamespaceMerkleMultiproof, 0, len(shareProof.ShareProofs)),
+		Namespace: Namespace{
+			Version: [1]byte{byte(shareProof.NamespaceVersion)},
+			Id:      nsID,
+		},
+		RowRoots:         make([]NamespaceNode, 0, len(shareProof.RowProof.RowRoots)),
+		RowProofs:        make([]BinaryMerkleProof, 0, len(shareProof.RowProof.Proofs)),
+		AttestationProof: attestationProof,
+	}
+
+	for _, sp := range shareProof.ShareProofs {
+		sideNodes := make([]NamespaceNode, 0, len(sp.Nodes))
+		for _, nodeBytes := range sp.Nodes {
+			sideNodes = append(sideNodes, toNamespaceNode(nodeBytes))
+		}
+		sharesProof.ShareProofs = append(sharesProof.ShareProofs, NamespaceMerkleMultiproof{
+			BeginKey:  big.NewInt(int64(sp.Start)),
+			EndKey:    big.NewInt(int64(sp.End)),
+			SideNodes: sideNodes,
+		})
+	}
+	for _, rr := range shareProof.RowProof.RowRoots {
+		sharesProof.RowRoots = append(sharesProof.RowRoots, toNamespaceNode(rr))
+	}
+	for _, rp := range shareProof.RowProof.Proofs {
+		sharesProof.RowProofs = append(sharesProof.RowProofs, toRowProofFromAppProof(rp))
+	}
+
+	proofData, err := packSharesProof(
+		common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr),
+		sharesProof,
+	)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Could not pack shares proof structs into ABI", "err", err)
 		return nil, err
 	}
 

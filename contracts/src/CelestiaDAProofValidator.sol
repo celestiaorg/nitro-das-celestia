@@ -2,270 +2,176 @@
 pragma solidity ^0.8.20;
 
 import "@nitro-contracts/osp/ICustomDAProofValidator.sol";
-import "blobstream-contracts/IDAOracle.sol";
-import "blobstream-contracts/DataRootTuple.sol";
-import "blobstream-contracts/lib/tree/binary/BinaryMerkleProof.sol";
-import "blobstream-contracts/lib/verifier/DAVerifier.sol";
-import "blobstream-contracts/lib/tree/namespace/NamespaceMerkleTree.sol";
-import "blobstream-contracts/lib/tree/Types.sol";
+import "../lib/IDAOracle.sol";
+import "../lib/DAVerifier.sol";
 
 /// @title CelestiaDAProofValidator
-/// @notice Validates Celestia DA certificates and preimage proofs for the Arbitrum fraud-proof system.
+/// @notice Validates Celestia DA certificates and read-preimage proofs.
 ///
-/// Certificate format (92 bytes, big-endian):
-///   [0]      CustomDAHeaderFlag  = 0x01
-///   [1]      CelestiaProviderTag = 0x63
-///   [2..3]   version             (uint16, must be 1)
-///   [4..11]  blockHeight         (uint64)
-///   [12..19] start               (uint64)  – ODS share index within a row
-///   [20..27] sharesLength        (uint64)
-///   [28..59] txCommitment        (bytes32) – blob commitment used for retrieval
-///   [60..91] dataRoot            (bytes32) – Celestia block data hash
+/// Certificate format (92 bytes):
+/// [0]      header        (bytes1)  = 0x01
+/// [1]      providerType  (bytes1)  = 0x63
+/// [2..3]   certVersion   (uint16)  = 1
+/// [4..11]  blockHeight   (uint64)
+/// [12..19] start         (uint64)
+/// [20..27] sharesLength  (uint64)
+/// [28..59] txCommitment  (bytes32)
+/// [60..91] dataRoot      (bytes32)
 ///
-/// Read-preimage proof format (passed in `proof` to validateReadPreimage):
-///   [certSize(8)][certificate(92)][version(1)=0x01][preimageSize(8)][preimage][blobstreamProofData]
+/// Full proof format seen by this contract:
+/// [certSize(8)][certificate][customProof]
 ///
-/// blobstreamProofData is ABI-encoded as:
-///   (address blobstreamAddr, NamespaceNode namespaceNode, BinaryMerkleProof rowProof, AttestationProof attestationProof)
+/// customProof (read-preimage):
+/// [version(1)=0x01][preimageSize(8)][preimage][abi.encode(address, SharesProof)]
 ///
-/// Certificate-validity proof format (passed in `proof` to validateCertificate):
-///   [certSize(8)][certificate(92)][claimedValid(1)]
-///
+/// customProof (certificate-validity):
+/// [claimedValid(1)][version(1)=0x01]
 contract CelestiaDAProofValidator is ICustomDAProofValidator {
-    // -------------------------------------------------------------------------
-    // Constants
-    // -------------------------------------------------------------------------
-    uint256 private constant CERT_SIZE_FIELD_LEN  = 8;
-    uint256 private constant CLAIMED_VALID_LEN     = 1;
-    uint256 private constant PROOF_VERSION_LEN     = 1;
-    uint256 private constant PREIMAGE_SIZE_FIELD   = 8;
+    uint256 private constant CERT_SIZE_FIELD_LEN = 8;
+    uint256 private constant CERT_V1_LEN = 92;
 
-    bytes1  private constant CERT_HEADER           = 0x01;
-    bytes1  private constant CELESTIA_PROVIDER_TAG = 0x63;
-    uint16  private constant CERT_VERSION          = 1;
-    uint256 private constant CERT_V1_LEN           = 92;
+    bytes1 private constant CERT_HEADER = 0x01;
+    bytes1 private constant CELESTIA_PROVIDER_TAG = 0x63;
+    uint16 private constant CERT_VERSION = 1;
 
-    // -------------------------------------------------------------------------
-    // State
-    // -------------------------------------------------------------------------
+    uint8 private constant READ_PROOF_VERSION = 0x01;
+    uint8 private constant VALIDITY_PROOF_VERSION = 0x01;
+
     address public immutable blobstreamX;
 
-    // -------------------------------------------------------------------------
-    // Constructor
-    // -------------------------------------------------------------------------
     constructor(address _blobstreamX) {
         blobstreamX = _blobstreamX;
     }
 
-    // -------------------------------------------------------------------------
-    // ICustomDAProofValidator
-    // -------------------------------------------------------------------------
-
-    /// @inheritdoc ICustomDAProofValidator
-    /// @dev Proof layout:
-    ///   [0..7]                  certSize (8 bytes, big-endian uint64)
-    ///   [8..8+certSize-1]       certificate
-    ///   [8+certSize]            version byte (must be 0x01)
-    ///   [8+certSize+1..+8]      preimageSize (8 bytes, big-endian uint64)
-    ///   [8+certSize+9..+N]      preimage data (N = preimageSize bytes)
-    ///   [8+certSize+9+N..]      blobstreamProofData (ABI-encoded)
     function validateReadPreimage(
         bytes32 certHash,
         uint256 offset,
         bytes calldata proof
     ) external view override returns (bytes memory preimageChunk) {
-        // ------------------------------------------------------------------
-        // 1. Extract and authenticate the certificate
-        // ------------------------------------------------------------------
         require(proof.length >= CERT_SIZE_FIELD_LEN, "Proof too short: certSize field missing");
 
         uint256 certSize = uint256(uint64(bytes8(proof[0:CERT_SIZE_FIELD_LEN])));
         uint256 afterCert = CERT_SIZE_FIELD_LEN + certSize;
-
         require(proof.length >= afterCert, "Proof too short: certificate truncated");
 
         bytes calldata certificate = proof[CERT_SIZE_FIELD_LEN:afterCert];
-
-        // The OSP already verified certHash == keccak256(certificate) before calling us,
-        // but we double-check for defence in depth.
         require(keccak256(certificate) == certHash, "Certificate hash mismatch");
-
-        // Structural validation of the certificate itself
         _requireValidCertStructure(certificate);
 
-        // ------------------------------------------------------------------
-        // 2. Parse preimage metadata
-        // ------------------------------------------------------------------
-        uint256 versionOffset    = afterCert;
-        uint256 preimSzOffset    = versionOffset + PROOF_VERSION_LEN;
-        uint256 preimDataOffset  = preimSzOffset + PREIMAGE_SIZE_FIELD;
+        bytes calldata custom = proof[afterCert:];
+        require(custom.length >= 9, "Proof too short: custom read proof header missing");
 
-        require(proof.length >= preimDataOffset, "Proof too short: preimage header missing");
+        uint256 pos = 0;
+        require(uint8(custom[pos]) == READ_PROOF_VERSION, "Invalid read proof version");
+        pos++;
 
-        uint8 version = uint8(proof[versionOffset]);
-        require(version == 0x01, "Invalid proof version");
+        uint256 preimageSize = uint256(uint64(bytes8(custom[pos:pos + 8])));
+        pos += 8;
 
-        uint256 preimageSize = uint256(uint64(bytes8(proof[preimSzOffset:preimDataOffset])));
-        uint256 proofDataOffset = preimDataOffset + preimageSize;
+        require(custom.length >= pos + preimageSize, "Proof too short: preimage truncated");
+        bytes calldata preimage = custom[pos:pos + preimageSize];
+        pos += preimageSize;
 
-        require(proof.length >= proofDataOffset, "Proof too short: preimage data truncated");
+        // Decode and verify shares-to-dataRoot proof via DAVerifier.
+        bytes calldata sharesProofData = custom[pos:];
+        require(sharesProofData.length > 0, "Missing shares proof data");
 
-        bytes calldata preimage   = proof[preimDataOffset:proofDataOffset];
-        bytes calldata proofData  = proof[proofDataOffset:];
+        (address encodedBlobstream, SharesProof memory sharesProof) = abi.decode(
+            sharesProofData,
+            (address, SharesProof)
+        );
+        encodedBlobstream; // ignored; immutable blobstreamX is authoritative.
 
-        // ------------------------------------------------------------------
-        // 3. Validate the Blobstream inclusion proof
-        // ------------------------------------------------------------------
-        _requireBlobstreamProof(certificate, proofData);
+        uint64 certHeight = uint64(bytes8(certificate[4:12]));
+        bytes32 certDataRoot = bytes32(certificate[60:92]);
 
-        // ------------------------------------------------------------------
-        // 4. Return the 32-byte chunk at the requested offset
-        // ------------------------------------------------------------------
+        require(
+            sharesProof.attestationProof.tuple.height == certHeight,
+            "Shares proof height does not match certificate blockHeight"
+        );
+        require(
+            sharesProof.attestationProof.tuple.dataRoot == certDataRoot,
+            "Shares proof dataRoot does not match certificate dataRoot"
+        );
+
+        (bool valid, ) = DAVerifier.verifySharesToDataRootTupleRoot(
+            IDAOracle(blobstreamX),
+            sharesProof
+        );
+        require(valid, "Invalid Celestia shares inclusion proof");
+
         if (offset >= preimageSize) {
             return new bytes(0);
         }
+
         uint256 remaining = preimageSize - offset;
-        uint256 chunkSize = remaining > 32 ? 32 : remaining;
-        bytes memory chunk = new bytes(chunkSize);
-        for (uint256 i = 0; i < chunkSize; i++) {
-            chunk[i] = preimage[offset + i];
+        uint256 outSize = remaining > 32 ? 32 : remaining;
+        bytes memory out = new bytes(outSize);
+        for (uint256 i = 0; i < outSize; i++) {
+            out[i] = preimage[offset + i];
         }
-        return chunk;
+        return out;
     }
 
-    /// @inheritdoc ICustomDAProofValidator
-    /// @dev Proof layout:
-    ///   [0..7]               certSize (8 bytes, big-endian uint64)
-    ///   [8..8+certSize-1]    certificate
-    ///   [8+certSize]         claimedValid (1 byte: 0x01 = valid, 0x00 = invalid)
-    ///
-    /// IMPORTANT: This function MUST NOT revert for invalid certificates –
-    /// it returns false instead.  Only truly unexpected conditions should revert.
     function validateCertificate(
         bytes calldata proof
     ) external pure override returns (bool isValid) {
-        // ------------------------------------------------------------------
-        // 1. Minimum length guard
-        // ------------------------------------------------------------------
-        if (proof.length < CERT_SIZE_FIELD_LEN + CERT_V1_LEN + CLAIMED_VALID_LEN) {
+        if (proof.length < CERT_SIZE_FIELD_LEN + CERT_V1_LEN + 1) {
             return false;
         }
 
         uint256 certSize = uint256(uint64(bytes8(proof[0:CERT_SIZE_FIELD_LEN])));
         uint256 afterCert = CERT_SIZE_FIELD_LEN + certSize;
-
-        if (proof.length < afterCert + CLAIMED_VALID_LEN) {
+        if (proof.length < afterCert + 1) {
             return false;
         }
 
         bytes calldata certificate = proof[CERT_SIZE_FIELD_LEN:afterCert];
-
-        // ------------------------------------------------------------------
-        // 2. Structural certificate validation (returns false, never reverts)
-        // ------------------------------------------------------------------
         if (!_isValidCertStructure(certificate)) {
             return false;
         }
 
-        // ------------------------------------------------------------------
-        // 3. Read the off-chain validator's claimed validity
-        //    The OSP will verify this claim independently against our return value.
-        // ------------------------------------------------------------------
         uint8 claimedValid = uint8(proof[afterCert]);
+        if (proof.length > afterCert + 1) {
+            uint8 proofVersion = uint8(proof[afterCert + 1]);
+            if (proofVersion != VALIDITY_PROOF_VERSION) {
+                return false;
+            }
+        }
         return claimedValid == 1;
     }
 
-    // -------------------------------------------------------------------------
-    // Internal helpers
-    // -------------------------------------------------------------------------
-
-    /// @notice Returns true iff the certificate bytes are structurally valid.
-    ///         Never reverts.
     function _isValidCertStructure(bytes calldata cert) internal pure returns (bool) {
         if (cert.length != CERT_V1_LEN) return false;
-        if (cert[0] != CERT_HEADER)           return false;
+        if (cert[0] != CERT_HEADER) return false;
         if (cert[1] != CELESTIA_PROVIDER_TAG) return false;
 
         uint16 version = uint16(bytes2(cert[2:4]));
         if (version != CERT_VERSION) return false;
 
-        // blockHeight at [4..11] must be non-zero
         uint64 blockHeight = uint64(bytes8(cert[4:12]));
         if (blockHeight == 0) return false;
 
-        // sharesLength at [20..27] must be non-zero
         uint64 sharesLength = uint64(bytes8(cert[20:28]));
         if (sharesLength == 0) return false;
 
-        // txCommitment at [28..59] must be non-zero
         bytes32 txCommitment = bytes32(cert[28:60]);
         if (txCommitment == bytes32(0)) return false;
 
-        // dataRoot at [60..91] must be non-zero
         bytes32 dataRoot = bytes32(cert[60:92]);
         if (dataRoot == bytes32(0)) return false;
 
         return true;
     }
 
-    /// @notice Asserts structural validity and reverts if the certificate is malformed.
-    ///         Used in validateReadPreimage where a malformed cert is a protocol error.
     function _requireValidCertStructure(bytes calldata cert) internal pure {
-        require(cert.length == CERT_V1_LEN,            "Invalid certificate length");
-        require(cert[0] == CERT_HEADER,                "Invalid certificate header");
-        require(cert[1] == CELESTIA_PROVIDER_TAG,      "Invalid Celestia provider tag");
-        uint16 version = uint16(bytes2(cert[2:4]));
-        require(version == CERT_VERSION,               "Unsupported certificate version");
-        require(uint64(bytes8(cert[4:12]))  != 0,      "Zero blockHeight in certificate");
-        require(uint64(bytes8(cert[20:28])) != 0,      "Zero sharesLength in certificate");
-        require(bytes32(cert[28:60]) != bytes32(0),    "Zero txCommitment in certificate");
-        require(bytes32(cert[60:92]) != bytes32(0),    "Zero dataRoot in certificate");
-    }
-
-    /// @notice Decodes the blobstream proof data and verifies the row-root inclusion.
-    /// @dev proofData is ABI-encoded as:
-    ///   (address blobstreamAddr, NamespaceNode namespaceNode,
-    ///    BinaryMerkleProof rowProof, AttestationProof attestationProof)
-    ///
-    ///   The certificate's blockHeight and dataRoot are validated against the
-    ///   attestation proof to ensure they match what is committed in Blobstream.
-    function _requireBlobstreamProof(
-        bytes calldata certificate,
-        bytes calldata proofData
-    ) internal view {
-        require(proofData.length > 0, "Missing Blobstream proof data");
-
-        (
-            ,
-            NamespaceNode memory namespaceNode,
-            BinaryMerkleProof memory rowProof,
-            AttestationProof memory attestationProof
-        ) = abi.decode(proofData, (address, NamespaceNode, BinaryMerkleProof, AttestationProof));
-
-        // Cross-check the proof height and data root against the certificate first.
-        uint64 certHeight    = uint64(bytes8(certificate[4:12]));
-        bytes32 certDataRoot = bytes32(certificate[60:92]);
-
-        require(
-            attestationProof.tuple.height == certHeight,
-            "Blobstream proof height does not match certificate blockHeight"
-        );
-        require(
-            attestationProof.tuple.dataRoot == certDataRoot,
-            "Blobstream proof dataRoot does not match certificate dataRoot"
-        );
-
-        // verifyRowRootToDataRootTupleRoot (v3.1.0) requires the data root as a
-        // 5th argument; use the value from the attestation tuple (already validated
-        // above to equal certDataRoot).
-        // Use the immutable blobstreamX address; ignore the encoded address for security.
-        (bool valid, ) = DAVerifier.verifyRowRootToDataRootTupleRoot(
-            IDAOracle(blobstreamX),
-            namespaceNode,
-            rowProof,
-            attestationProof,
-            attestationProof.tuple.dataRoot
-        );
-        require(valid, "Invalid Blobstream row-root inclusion proof");
+        require(cert.length == CERT_V1_LEN, "Invalid certificate length");
+        require(cert[0] == CERT_HEADER, "Invalid certificate header");
+        require(cert[1] == CELESTIA_PROVIDER_TAG, "Invalid Celestia provider tag");
+        require(uint16(bytes2(cert[2:4])) == CERT_VERSION, "Unsupported certificate version");
+        require(uint64(bytes8(cert[4:12])) != 0, "Zero blockHeight in certificate");
+        require(uint64(bytes8(cert[20:28])) != 0, "Zero sharesLength in certificate");
+        require(bytes32(cert[28:60]) != bytes32(0), "Zero txCommitment in certificate");
+        require(bytes32(cert[60:92]) != bytes32(0), "Zero dataRoot in certificate");
     }
 }

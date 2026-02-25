@@ -13,7 +13,6 @@ via_ir = true
 "@openzeppelin-contracts" = { version = "4.9.6" }
 forge-std = { version = "1.7.6" }
 "@nitro-contracts" = { version = "3.2.0", url = "https://github.com/OffchainLabs/nitro-contracts/archive/refs/tags/v3.2.0.zip" }
-blobstream-contracts = { version = "3.1.0", url = "https://github.com/celestiaorg/blobstream-contracts/archive/refs/tags/v3.1.0.zip" }
 
 [soldeer]
 remappings_generate = true

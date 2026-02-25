@@ -24,9 +24,11 @@ import (
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
+	"github.com/celestiaorg/nitro-das-celestia/config"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
+	"github.com/celestiaorg/nitro-das-celestia/signer"
 	"github.com/celestiaorg/rsmt2d"
 	"github.com/cometbft/cometbft/crypto/merkle"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
@@ -42,6 +44,9 @@ import (
 
 	blobstreamx "github.com/succinctlabs/sp1-blobstream/bindings"
 )
+
+// CelestiaMaxBlobSize is the maximum blob size supported by Celestia (8 MB as of 2024)
+const CelestiaMaxBlobSize = 8 * 1024 * 1024 // 8,388,608 bytes
 
 type DAConfig struct {
 	WithWriter                  bool               `koanf:"with-writer"`
@@ -67,6 +72,8 @@ type DAConfig struct {
 	DangerousReorgOnReadFailure bool               `koanf:"dangerous-reorg-on-read-failure"`
 	RetryConfig                 RetryBackoffConfig `koanf:"retry-config"`
 	AWSKMSConfig                AWSKMSConfig       `koanf:"aws-kms-config"`
+	// Keyring is the keyring used for signing transactions (set externally when using TOML config)
+	Keyring keyring.Keyring `koanf:"-"`
 }
 
 // AWSKMSConfig configures the AWS KMS backend for signing Celestia transactions.
@@ -91,6 +98,21 @@ func (c *AWSKMSConfig) ToKeyringConfig() *awskeyring.Config {
 	}
 }
 
+func defaultAWSKMSConfig() AWSKMSConfig {
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region = os.Getenv("AWS_DEFAULT_REGION")
+	}
+	if region == "" {
+		region = "us-east-1"
+	}
+	return AWSKMSConfig{
+		Region:      region,
+		Endpoint:    os.Getenv("AWS_KMS_ENDPOINT"),
+		AliasPrefix: "alias/nitro-das-celestia/",
+	}
+}
+
 type RetryBackoffConfig struct {
 	MaxRetries     int           `koanf:"max-retries"`
 	InitialBackoff time.Duration `koanf:"initial-backoff"`
@@ -98,6 +120,8 @@ type RetryBackoffConfig struct {
 	BackoffFactor  float64       `koanf:"backoff-factor"`
 }
 
+// CelestiaRetryConfigAddOptions adds CLI flags for retry configuration.
+// Deprecated: Use config.toml file instead. This function is kept for backward compatibility.
 func CelestiaRetryConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Int(prefix+".max-retries", DefaultCelestiaRetryConfig.MaxRetries, "maximum number of retry attempts")
 	f.Duration(prefix+".initial-backoff", DefaultCelestiaRetryConfig.InitialBackoff, "initial backoff duration for retries")
@@ -116,6 +140,71 @@ type ValidatorConfig struct {
 	EthClient      string `koanf:"eth-rpc" reload:"hot"`
 	BlobstreamAddr string `koanf:"blobstream" reload:"hot"`
 	SleepTime      int    `koanf:"sleep-time" reload:"hot"`
+}
+
+// NewDAConfigFromTOML creates a DAConfig from a TOML config.Config and an optional keyring.
+// The keyring should be created using the signer package before calling this function.
+func NewDAConfigFromTOML(cfg *config.Config, kr keyring.Keyring) (*DAConfig, error) {
+	if cfg == nil {
+		return nil, errors.New("config cannot be nil")
+	}
+
+	// Get key name from signer config
+	keyName := signer.GetKeyName(&cfg.Celestia.Signer)
+
+	return &DAConfig{
+		WithWriter:    cfg.Celestia.WithWriter,
+		NoopWriter:    cfg.Celestia.NoopWriter,
+		GasPrice:      cfg.Celestia.GasPrice,
+		GasMultiplier: cfg.Celestia.GasMultiplier,
+
+		// Reader configuration (uses DA Bridge node)
+		ReadRpc:       cfg.Celestia.Reader.RPC,
+		ReadAuthToken: cfg.Celestia.Reader.AuthToken,
+		EnableDATLS:   cfg.Celestia.Reader.EnableTLS,
+
+		// Writer configuration (uses Core gRPC)
+		// Note: Rpc and AuthToken are kept for backward compatibility with legacy node client
+		// When using txclient (the new default), CoreURL is the primary write endpoint
+		Rpc:           cfg.Celestia.Reader.RPC, // For read client fallback
+		AuthToken:     cfg.Celestia.Reader.AuthToken,
+		CoreURL:       cfg.Celestia.Writer.CoreGRPC,
+		CoreToken:     cfg.Celestia.Writer.CoreToken,
+		CoreNetwork:   cfg.Celestia.Network,
+		EnableCoreTLS: cfg.Celestia.Writer.EnableTLS,
+
+		// Keyring and key settings
+		Keyring:     kr,
+		KeyName:     keyName,
+		KeyPath:     cfg.Celestia.Signer.Local.KeyPath,
+		BackendName: cfg.Celestia.Signer.Local.Backend,
+
+		// Namespace
+		NamespaceId: cfg.Celestia.NamespaceID,
+
+		// Validator configuration
+		ValidatorConfig: ValidatorConfig{
+			EthClient:      cfg.Celestia.Validator.EthRPC,
+			BlobstreamAddr: cfg.Celestia.Validator.BlobstreamAddr,
+			SleepTime:      cfg.Celestia.Validator.SleepTime,
+		},
+
+		// Cache and retry
+		CacheCleanupTime: cfg.Celestia.GetCacheTimeDuration(),
+		RetryConfig: RetryBackoffConfig{
+			MaxRetries:     cfg.Celestia.Retry.MaxRetries,
+			InitialBackoff: cfg.Celestia.Retry.GetInitialBackoffDuration(),
+			MaxBackoff:     cfg.Celestia.Retry.GetMaxBackoffDuration(),
+			BackoffFactor:  cfg.Celestia.Retry.BackoffFactor,
+		},
+		AWSKMSConfig: defaultAWSKMSConfig(),
+
+		// Advanced options
+		DangerousReorgOnReadFailure: cfg.Celestia.DangerousReorgOnReadFailure,
+
+		// Always use txclient when loading from TOML (legacy node client is removed)
+		ExperimentalTxClient: true,
+	}, nil
 }
 
 var (
@@ -187,6 +276,8 @@ func (c *CelestiaDA) MaxMessageSize(ctx context.Context) (int, error) {
 	return int(appconsts.DefaultMaxBytes), nil
 }
 
+// CelestiaDAConfigAddOptions adds CLI flags for Celestia DA configuration.
+// Deprecated: Use config.toml file instead. This function is kept for backward compatibility.
 func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Bool(prefix+".with-writer", false, "Enable using the DA Server for writing data to Celestia")
 	f.Bool(prefix+".experimental-tx-client", false, "Enable using the DA Server for writing data to Celestia")
@@ -209,6 +300,7 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.String(prefix+".validator-config"+".eth-rpc", "", "Parent chain connection, only used for validation")
 	f.String(prefix+".validator-config"+".blobstream", "", "Blobstream address, only used for validation")
 	f.Int(prefix+".validator-config"+".sleep-time", 3600, "How many seconds to wait before initiating another filtering loop for Blobstream events")
+	f.Bool(prefix+".dangerous-reorg-on-read-failure", false, "DANGEROUS: reorg if any error during reads from celestia node")
 	f.Duration(prefix+".cache-time", time.Hour/2, "how often to clean the in memory cache")
 	CelestiaRetryConfigAddOptions(prefix+".retry-config", f)
 	CelestiaAWSKMSConfigAddOptions(prefix+".aws-kms-config", f)
@@ -292,9 +384,29 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 		return nil, err
 	}
 
-	namespace, err := libshare.NewV0Namespace(nsBytes)
-	if err != nil {
-		return nil, err
+	// Handle both full namespace (29 bytes) and short subID (<=10 bytes) formats
+	var namespace libshare.Namespace
+	if len(nsBytes) == 29 {
+		// Full namespace format: 1 byte version + 28 bytes ID
+		// For v0 namespaces, extract the subID from the last 10 bytes of the ID
+		if nsBytes[0] != 0 {
+			return nil, fmt.Errorf("only v0 namespaces are supported, got version %d", nsBytes[0])
+		}
+		// The subID is the non-zero suffix of the 28-byte ID
+		// For v0, the first 18 bytes of ID should be zeros, leaving 10 bytes for subID
+		subID := nsBytes[19:] // Skip version byte (1) + zero padding (18) = 19 bytes
+		namespace, err = libshare.NewV0Namespace(subID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create namespace from full format: %w", err)
+		}
+	} else if len(nsBytes) <= 10 {
+		// Short subID format (direct subID, max 10 bytes)
+		namespace, err = libshare.NewV0Namespace(nsBytes)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, fmt.Errorf("invalid namespace_id length: %d bytes (expected 29 for full namespace or <=10 for subID)", len(nsBytes))
 	}
 
 	var readClient *txclient.ReadClient
@@ -317,29 +429,40 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 		}
 	}
 
-	if cfg.WithWriter {
-		// compatibility to connect with a light node / bridge node without grpc
-		// grpc client currently under "experimental"
-		if cfg.ExperimentalTxClient {
-			var err error
-			if cfg.KeyPath == "" {
-				cfg.KeyPath, err = DefaultKeyringPath("light", cfg.CoreNetwork)
-			}
+	if cfg.WithWriter && !cfg.NoopWriter {
+		// Check if we have an externally provided keyring (from TOML config)
+		// or if we're using the legacy ExperimentalTxClient flag
+		if cfg.Keyring != nil || cfg.ExperimentalTxClient {
+			var kr keyring.Keyring
+			// Use externally provided keyring if available
+			if cfg.Keyring != nil {
+				kr = cfg.Keyring
+				log.Info("Using externally provided keyring")
+			} else {
+				// Legacy path: create keyring internally (backward compatibility)
+				if cfg.KeyPath == "" {
+					cfg.KeyPath, err = DefaultKeyringPath("light", cfg.CoreNetwork)
+					if err != nil {
+						log.Error("failed to determine key path", "err", err)
+						return nil, err
+					}
+				}
 
-			log.Info("Key path", "path", cfg.KeyPath)
-			// Create a keyring
-			kr, err := initKeyring(context.Background(), cfg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to initialize keyring: %w", err)
+				log.Info("Key path", "path", cfg.KeyPath)
+				// Create a keyring using local or AWS KMS backend.
+				kr, err = initKeyring(context.Background(), cfg)
+				if err != nil {
+					return nil, fmt.Errorf("failed to initialize keyring: %w", err)
+				}
 			}
 
 			if cfg.CoreURL == "" {
 				cfg.CoreURL = cfg.Rpc
 			}
 
-			log.Info("Core URL: ", "url", cfg.CoreURL)
+			log.Info("Core URL", "url", cfg.CoreURL)
 
-			// Configure the client
+			// Configure the txclient
 			clientCfg := txclient.Config{
 				ReadConfig: txclient.ReadConfig{
 					BridgeDAAddr: cfg.Rpc,
@@ -359,18 +482,20 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 
 			writeClient, err = txclient.New(context.Background(), clientCfg, kr)
 			if err != nil {
-				log.Error("failed to initialize client", "err", err)
+				log.Error("failed to initialize txclient", "err", err)
 				return nil, err
 			}
 
-			log.Info("Succesfully initialized write (experimental) txclient", "writeRpc", cfg.CoreURL)
+			log.Info("Successfully initialized txclient", "coreURL", cfg.CoreURL)
 		} else {
+			// Legacy node client path (deprecated - will be removed)
+			log.Warn("Using deprecated node.Client - please migrate to txclient with config.toml")
 			daClient, err = node.NewClient(context.Background(), cfg.Rpc, cfg.AuthToken)
 			if err != nil {
 				log.Error("could not initialize node client for da rpc", "err", err)
 				return nil, err
 			}
-			log.Info("Succesfully initialized node da client", "writeRpc", cfg.Rpc)
+			log.Info("Successfully initialized node da client", "writeRpc", cfg.Rpc)
 		}
 	}
 
@@ -401,10 +526,8 @@ func (c *CelestiaDA) Stop() error {
 	if c.ReadClient != nil {
 		c.ReadClient.Close()
 	}
-	if c.Cfg.ExperimentalTxClient {
-		if c.TxClient != nil {
-			c.TxClient.Close()
-		}
+	if c.TxClient != nil {
+		c.TxClient.Close()
 	}
 	return nil
 }
@@ -463,11 +586,14 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 		// add submit options
 		submitOptions := &blob.SubmitOptions{}
 		state.WithGasPrice(gasPrice)(submitOptions)
-		if c.Cfg.ExperimentalTxClient {
-			height, err = c.TxClient.Blob.Submit(ctx, []*blob.Blob{dataBlob}, submitOptions)
 
-		} else {
+		// Use TxClient if available (new default), otherwise fall back to legacy Client
+		if c.TxClient != nil {
+			height, err = c.TxClient.Blob.Submit(ctx, []*blob.Blob{dataBlob}, submitOptions)
+		} else if c.Client != nil {
 			height, err = c.Client.Blob.Submit(ctx, []*blob.Blob{dataBlob}, submitOptions)
+		} else {
+			return nil, errors.New("no write client available")
 		}
 		if err != nil {
 			switch {

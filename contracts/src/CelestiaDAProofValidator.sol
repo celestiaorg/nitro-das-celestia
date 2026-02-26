@@ -42,6 +42,12 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     uint256 private constant CELESTIA_SEQUENCE_LEN_BYTES = 4;
     uint256 private constant CELESTIA_PAYLOAD_START =
         CELESTIA_NAMESPACE_SIZE + CELESTIA_SHARE_INFO_BYTES + CELESTIA_SEQUENCE_LEN_BYTES;
+    uint256 private constant CELESTIA_CONT_SHARE_PAYLOAD_START =
+        CELESTIA_NAMESPACE_SIZE + CELESTIA_SHARE_INFO_BYTES;
+    uint256 private constant CELESTIA_FIRST_SHARE_PAYLOAD_CAP =
+        CELESTIA_SHARE_SIZE - CELESTIA_PAYLOAD_START;
+    uint256 private constant CELESTIA_CONT_SHARE_PAYLOAD_CAP =
+        CELESTIA_SHARE_SIZE - CELESTIA_CONT_SHARE_PAYLOAD_START;
 
     address public immutable blobstreamX;
 
@@ -138,9 +144,6 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             require(sharesProof.data[i].length == CELESTIA_SHARE_SIZE, "Invalid share length");
         }
 
-        // TODO(celestia): Support multi-share payload decoding when payload spans continuation shares.
-        require(shareCount == 1, "Multi-share payloads not supported yet");
-
         bytes memory share = sharesProof.data[0];
         require(share.length >= CELESTIA_PAYLOAD_START, "Invalid share header");
 
@@ -148,10 +151,6 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             (uint256(uint8(share[31])) << 16) |
             (uint256(uint8(share[32])) << 8) |
             uint256(uint8(share[33]));
-        require(
-            sequenceLen + CELESTIA_PAYLOAD_START <= CELESTIA_SHARE_SIZE,
-            "Invalid sequence length in share"
-        );
         require(payloadSize == sequenceLen, "Payload size mismatch");
 
         if (chunkLen == 0) {
@@ -161,9 +160,38 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         require(offset + chunkLen <= sequenceLen, "Chunk outside payload bounds");
 
         bytes memory out = new bytes(chunkLen);
-        uint256 payloadOffsetInShare = CELESTIA_PAYLOAD_START + offset;
+        if (offset < CELESTIA_FIRST_SHARE_PAYLOAD_CAP) {
+            uint256 firstAvailable = CELESTIA_FIRST_SHARE_PAYLOAD_CAP - offset;
+            uint256 firstTake = chunkLen < firstAvailable ? chunkLen : firstAvailable;
+            uint256 payloadOffsetInShare = CELESTIA_PAYLOAD_START + offset;
+            for (uint256 i = 0; i < firstTake; i++) {
+                out[i] = share[payloadOffsetInShare + i];
+            }
+            if (firstTake == chunkLen) {
+                return out;
+            }
+            require(shareCount == 2, "Missing continuation share");
+            bytes memory cont = sharesProof.data[1];
+            require(cont.length >= CELESTIA_CONT_SHARE_PAYLOAD_START, "Invalid continuation share");
+            uint256 rem = chunkLen - firstTake;
+            for (uint256 i = 0; i < rem; i++) {
+                out[firstTake + i] = cont[CELESTIA_CONT_SHARE_PAYLOAD_START + i];
+            }
+            return out;
+        }
+
+        // Offset starts in continuation payload region. Current proof generator provides 2 shares for this case.
+        require(shareCount == 2, "Missing continuation share");
+        uint256 contOffset = offset - CELESTIA_FIRST_SHARE_PAYLOAD_CAP;
+        require(
+            contOffset + chunkLen <= CELESTIA_CONT_SHARE_PAYLOAD_CAP,
+            "Chunk crosses unsupported continuation boundary"
+        );
+        bytes memory contShare = sharesProof.data[1];
+        require(contShare.length >= CELESTIA_CONT_SHARE_PAYLOAD_START, "Invalid continuation share");
+        uint256 contStart = CELESTIA_CONT_SHARE_PAYLOAD_START + contOffset;
         for (uint256 i = 0; i < chunkLen; i++) {
-            out[i] = share[payloadOffsetInShare + i];
+            out[i] = contShare[contStart + i];
         }
         return out;
     }

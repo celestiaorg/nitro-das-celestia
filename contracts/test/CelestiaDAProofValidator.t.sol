@@ -32,9 +32,8 @@ contract CelestiaDAProofValidatorTest is Test {
     function setUp() public {
         ns = Namespace({version: hex"00", id: bytes28(0)});
 
-        payload = bytes("walkthrough-1772079452815387000");
-        share0 = _buildShareWithPayload(payload);
-        share1 = _buildShareWithPayload(bytes("second-share-payload"));
+        payload = _buildPayload(560);
+        (share0, share1) = _buildTwoSharesWithPayload(payload);
 
         rowRoot0 = leafDigest(ns, share0);
         rowRoot1 = leafDigest(ns, share1);
@@ -84,45 +83,40 @@ contract CelestiaDAProofValidatorTest is Test {
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         bytes memory out = validator.validateReadPreimage(keccak256(validCert), offset, proof);
 
-        assertEq(out.length, payload.length);
-        for (uint256 i = 0; i < payload.length; i++) {
+        assertEq(out.length, 32);
+        for (uint256 i = 0; i < 32; i++) {
             assertEq(out[i], payload[i]);
         }
     }
 
-    function test_validateReadPreimage_offset30_returnsSingleByte() public {
-        uint64 offset = 30;
+    function test_validateReadPreimage_crossShareChunk() public {
+        uint64 offset = 470;
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         bytes memory out = validator.validateReadPreimage(keccak256(validCert), offset, proof);
 
-        assertEq(out.length, 1);
-        assertEq(out[0], payload[30]);
-    }
-
-    function test_validateReadPreimage_crossShareChunk_revertsForNow() public {
-        uint64 offset = 500;
-        bytes memory proof = _buildReadProof(offset, 560, false, false);
-        vm.expectRevert("Multi-share payloads not supported yet");
-        validator.validateReadPreimage(keccak256(validCert), offset, proof);
+        assertEq(out.length, 32);
+        for (uint256 i = 0; i < 32; i++) {
+            assertEq(out[i], payload[offset + i]);
+        }
     }
 
     function test_validateReadPreimage_wrongCertHash_reverts() public {
         uint64 offset = 64;
-        bytes memory proof = _buildReadProof(offset, 600, false, false);
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         vm.expectRevert("Certificate hash mismatch");
         validator.validateReadPreimage(keccak256("wrong"), offset, proof);
     }
 
     function test_validateReadPreimage_badSharesProof_reverts() public {
         uint64 offset = 64;
-        bytes memory proof = _buildReadProof(offset, 600, true, false);
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), true, false);
         vm.expectRevert("Invalid Celestia shares inclusion proof");
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
 
     function test_validateReadPreimage_badIndex_reverts() public {
         uint64 offset = 64;
-        bytes memory proof = _buildReadProof(offset, 600, false, true);
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, true);
         vm.expectRevert("Invalid firstShareIndexInBlob");
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
@@ -146,7 +140,13 @@ contract CelestiaDAProofValidatorTest is Test {
             rowRoot1.digest
         );
 
-        bool cross = (offset % 512) + 32 > 512 && offset < payloadSize;
+        uint8 chunkLen = 0;
+        if (offset < payloadSize) {
+            uint64 rem = payloadSize - offset;
+            chunkLen = uint8(rem > 32 ? 32 : rem);
+        }
+        uint64 firstSharePayloadCap = 512 - 34;
+        bool cross = offset < firstSharePayloadCap && offset + chunkLen > firstSharePayloadCap;
         uint8 shareCount = cross ? 2 : 1;
         uint64 firstShareIndex = certStart + (offset / 512);
         if (badIndex) firstShareIndex++;
@@ -210,12 +210,6 @@ contract CelestiaDAProofValidatorTest is Test {
             })
         });
 
-        uint8 chunkLen = 0;
-        if (offset < payloadSize) {
-            uint64 rem = payloadSize - offset;
-            chunkLen = uint8(rem > 32 ? 32 : rem);
-        }
-
         bytes memory custom = abi.encodePacked(
             bytes1(0x01),
             bytes8(offset),
@@ -247,18 +241,32 @@ contract CelestiaDAProofValidatorTest is Test {
         );
     }
 
-    function _buildShareWithPayload(bytes memory pl) internal pure returns (bytes memory) {
-        bytes memory s = new bytes(512);
-        // Namespace (29 bytes) defaults to 0x00 to match `ns` in setup.
-        s[29] = bytes1(0x01); // info byte
-        uint32 len = uint32(pl.length);
-        s[30] = bytes1(uint8(len >> 24));
-        s[31] = bytes1(uint8(len >> 16));
-        s[32] = bytes1(uint8(len >> 8));
-        s[33] = bytes1(uint8(len));
-        for (uint256 i = 0; i < pl.length; i++) {
-            s[34 + i] = pl[i];
+    function _buildPayload(uint256 len) internal pure returns (bytes memory p) {
+        p = new bytes(len);
+        for (uint256 i = 0; i < len; i++) {
+            p[i] = bytes1(uint8(i % 251));
         }
-        return s;
+    }
+
+    function _buildTwoSharesWithPayload(bytes memory pl) internal pure returns (bytes memory s0, bytes memory s1) {
+        s0 = new bytes(512);
+        s1 = new bytes(512);
+        s0[29] = bytes1(0x01); // info byte (first share)
+        uint32 len = uint32(pl.length);
+        s0[30] = bytes1(uint8(len >> 24));
+        s0[31] = bytes1(uint8(len >> 16));
+        s0[32] = bytes1(uint8(len >> 8));
+        s0[33] = bytes1(uint8(len));
+        // Continuation share carries namespace + info byte, payload starts at 30.
+        s1[29] = bytes1(0x00);
+
+        uint256 firstCap = 512 - 34;
+        uint256 firstTake = pl.length < firstCap ? pl.length : firstCap;
+        for (uint256 i = 0; i < firstTake; i++) {
+            s0[34 + i] = pl[i];
+        }
+        for (uint256 i = firstTake; i < pl.length; i++) {
+            s1[30 + (i - firstTake)] = pl[i];
+        }
     }
 }

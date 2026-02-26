@@ -18,7 +18,6 @@ import (
 
 	awskeyring "github.com/celestiaorg/aws-kms-keyring"
 	"github.com/celestiaorg/celestia-app/v6/pkg/appconsts"
-	pkgproof "github.com/celestiaorg/celestia-app/v6/pkg/proof"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -1348,12 +1347,6 @@ func (c *CelestiaDA) generateCelestiaProof(
 
 	attestationProof := toAttestationProof(event.ProofNonce.Uint64(), certificate.BlockHeight, [32]byte(header.DataHash), dataRootProof)
 
-	eds, err := c.ReadClient.Share.GetEDS(ctx, certificate.BlockHeight)
-	if err != nil {
-		celestiaValidationFailureCounter.Inc(1)
-		return nil, fmt.Errorf("failed to fetch EDS for share inclusion proof: %w", err)
-	}
-
 	if shareEnd <= shareStart {
 		return nil, fmt.Errorf("invalid share range")
 	}
@@ -1361,21 +1354,25 @@ func (c *CelestiaDA) generateCelestiaProof(
 		return nil, fmt.Errorf("share range exceeds supported int size")
 	}
 
-	shareProof, err := pkgproof.NewShareInclusionProofFromEDS(
-		eds,
-		*c.Namespace,
-		libshare.NewRange(int(shareStart), int(shareEnd)),
-	)
+	rangeResult, err := c.ReadClient.Share.GetRange(ctx, certificate.BlockHeight, int(shareStart), int(shareEnd))
 	if err != nil {
 		celestiaValidationFailureCounter.Inc(1)
-		return nil, fmt.Errorf("failed to build share inclusion proof: %w", err)
+		return nil, fmt.Errorf("failed to fetch share range proof: %w", err)
 	}
-	if shareProof.RowProof == nil {
+	if rangeResult == nil || rangeResult.Proof == nil {
+		return nil, fmt.Errorf("share range proof missing")
+	}
+	if err := rangeResult.Verify(header.DataHash); err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, fmt.Errorf("share range verification failed: %w", err)
+	}
+	shareProof := rangeResult.Proof
+	if len(shareProof.RowProof.Proofs) == 0 || len(shareProof.RowProof.RowRoots) == 0 {
 		return nil, fmt.Errorf("share inclusion proof missing row proof")
 	}
 
 	var nsID [28]byte
-	copy(nsID[:], shareProof.NamespaceId)
+	copy(nsID[:], shareProof.NamespaceID)
 	sharesProof := SharesProof{
 		Data:        shareProof.Data,
 		ShareProofs: make([]NamespaceMerkleMultiproof, 0, len(shareProof.ShareProofs)),
@@ -1403,7 +1400,7 @@ func (c *CelestiaDA) generateCelestiaProof(
 		sharesProof.RowRoots = append(sharesProof.RowRoots, toNamespaceNode(rr))
 	}
 	for _, rp := range shareProof.RowProof.Proofs {
-		sharesProof.RowProofs = append(sharesProof.RowProofs, toRowProofFromAppProof(rp))
+		sharesProof.RowProofs = append(sharesProof.RowProofs, toRowProofs(rp))
 	}
 
 	proofData, err := packSharesProof(

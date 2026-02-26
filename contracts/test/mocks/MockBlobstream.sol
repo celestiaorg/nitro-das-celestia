@@ -10,10 +10,10 @@ import "../../lib/tree/binary/BinaryMerkleTree.sol";
 contract MockBlobstream is IDAOracle {
     error ContractFrozen();
     event DataCommitmentStored(
-        uint256 indexed proofNonce,
+        uint256 proofNonce,
         uint64 indexed startBlock,
         uint64 indexed endBlock,
-        bytes32 dataCommitment
+        bytes32 indexed dataCommitment
     );
 
     uint64 public latestBlock;

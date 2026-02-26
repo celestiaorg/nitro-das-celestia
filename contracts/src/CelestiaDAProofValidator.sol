@@ -93,12 +93,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         uint256 shareCount = uint8(custom[pos]);
         pos++;
 
-        uint256 expectedChunkLen = 0;
-        if (offset < payloadSize) {
-            uint256 remain = payloadSize - offset;
-            expectedChunkLen = remain > 32 ? 32 : remain;
-        }
-        require(chunkLen == expectedChunkLen, "Invalid chunkLen");
+        require(chunkLen == _expectedChunkLen(offset, payloadSize), "Invalid chunkLen");
 
         uint256 certStart = uint256(uint64(bytes8(certificate[12:20])));
         uint256 certSharesLength = uint256(uint64(bytes8(certificate[20:28])));
@@ -150,11 +145,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         require(share.length >= firstSharePayloadOffset, "Invalid share header");
 
         if (firstRel == 0) {
-            uint256 sequenceLen = (uint256(uint8(share[30])) << 24) |
-                (uint256(uint8(share[31])) << 16) |
-                (uint256(uint8(share[32])) << 8) |
-                uint256(uint8(share[33]));
-            require(payloadSize == sequenceLen, "Payload size mismatch");
+            require(payloadSize == _decodeSequenceLen(share), "Payload size mismatch");
         }
 
         if (chunkLen == 0) {
@@ -253,6 +244,9 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     }
 
     function _payloadOffsetToShareRel(uint256 payloadOffset) internal pure returns (uint256) {
+        // Celestia payload layout:
+        // - share 0 payload: 478 bytes (512 - 29 namespace - 1 info - 4 sequence length)
+        // - continuation payload: 482 bytes (512 - 29 namespace - 1 info)
         if (payloadOffset < CELESTIA_FIRST_SHARE_PAYLOAD_CAP) {
             return 0;
         }
@@ -278,5 +272,20 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             return CELESTIA_PAYLOAD_START;
         }
         return CELESTIA_CONT_SHARE_PAYLOAD_START;
+    }
+
+    function _expectedChunkLen(uint256 offset, uint256 payloadSize) internal pure returns (uint256) {
+        if (offset >= payloadSize) {
+            return 0;
+        }
+        uint256 remain = payloadSize - offset;
+        return remain > 32 ? 32 : remain;
+    }
+
+    function _decodeSequenceLen(bytes memory share0) internal pure returns (uint256) {
+        return (uint256(uint8(share0[30])) << 24) |
+            (uint256(uint8(share0[31])) << 16) |
+            (uint256(uint8(share0[32])) << 8) |
+            uint256(uint8(share0[33]));
     }
 }

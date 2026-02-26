@@ -142,6 +142,17 @@ var (
 	ErrTxIncorrectAccountSequence = errors.New("incorrect account sequence")
 )
 
+const (
+	celestiaShareSize              uint64 = 512
+	celestiaNamespaceSize          uint64 = 29
+	celestiaShareInfoBytes         uint64 = 1
+	celestiaSequenceLenBytes       uint64 = 4
+	celestiaFirstSharePayloadStart uint64 = celestiaNamespaceSize + celestiaShareInfoBytes + celestiaSequenceLenBytes
+	celestiaContSharePayloadStart  uint64 = celestiaNamespaceSize + celestiaShareInfoBytes
+	celestiaFirstSharePayloadCap   uint64 = celestiaShareSize - celestiaFirstSharePayloadStart
+	celestiaContSharePayloadCap    uint64 = celestiaShareSize - celestiaContSharePayloadStart
+)
+
 func hasBits(checking byte, bits byte) bool {
 	return (checking & bits) == bits
 }
@@ -1006,29 +1017,10 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 		return nil, fmt.Errorf("offset out of bounds: offset %d > payload length %d", offset, payloadSize)
 	}
 
-	shareRel := payloadOffsetToShareRel(offset)
-	firstShareIndex := certificate.Start + shareRel
-	shareCount := uint64(1)
+	plan := buildReadChunkPlan(offset, payloadSize, certificate.Start)
 
-	chunkLen := uint8(0)
-	if offset < payloadSize {
-		remaining := payloadSize - offset
-		if remaining > 32 {
-			chunkLen = 32
-		} else {
-			chunkLen = uint8(remaining)
-		}
-
-		sharePayloadStart := payloadStartForShareRel(shareRel)
-		sharePayloadCap := payloadCapacityForShareRel(shareRel)
-		intra := offset - sharePayloadStart
-		if intra+uint64(chunkLen) > sharePayloadCap {
-			shareCount = 2
-		}
-	}
-
-	shareStart := firstShareIndex
-	shareEnd := shareStart + shareCount
+	shareStart := plan.firstShareIndex
+	shareEnd := shareStart + plan.shareCount
 	if shareStart < certificate.Start || shareEnd > certificate.Start+certificate.SharesLength {
 		return nil, fmt.Errorf("offset maps outside certificate share range")
 	}
@@ -1044,9 +1036,9 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 	return buildReadPreimageProofV1(
 		offset,
 		payloadSize,
-		chunkLen,
-		firstShareIndex,
-		uint8(shareCount),
+		plan.chunkLen,
+		plan.firstShareIndex,
+		uint8(plan.shareCount),
 		proofData,
 	), nil
 }
@@ -1082,24 +1074,64 @@ func buildReadPreimageProofV1(
 }
 
 func payloadOffsetToShareRel(offset uint64) uint64 {
-	if offset < 478 {
+	// Celestia payload layout:
+	// - First share carries 478 payload bytes (512 - 29 namespace - 1 info - 4 sequence length)
+	// - Continuation shares carry 482 payload bytes (512 - 29 namespace - 1 info)
+	if offset < celestiaFirstSharePayloadCap {
 		return 0
 	}
-	return 1 + (offset-478)/482
+	return 1 + (offset-celestiaFirstSharePayloadCap)/celestiaContSharePayloadCap
 }
 
 func payloadStartForShareRel(shareRel uint64) uint64 {
 	if shareRel == 0 {
 		return 0
 	}
-	return 478 + (shareRel-1)*482
+	return celestiaFirstSharePayloadCap + (shareRel-1)*celestiaContSharePayloadCap
 }
 
 func payloadCapacityForShareRel(shareRel uint64) uint64 {
 	if shareRel == 0 {
-		return 478
+		return celestiaFirstSharePayloadCap
 	}
-	return 482
+	return celestiaContSharePayloadCap
+}
+
+type readChunkPlan struct {
+	chunkLen        uint8
+	firstShareIndex uint64
+	shareCount      uint64
+}
+
+func buildReadChunkPlan(offset, payloadSize, certStart uint64) readChunkPlan {
+	shareRel := payloadOffsetToShareRel(offset)
+	plan := readChunkPlan{
+		chunkLen:        expectedChunkLen(offset, payloadSize),
+		firstShareIndex: certStart + shareRel,
+		shareCount:      1,
+	}
+	if plan.chunkLen == 0 {
+		return plan
+	}
+
+	sharePayloadStart := payloadStartForShareRel(shareRel)
+	sharePayloadCap := payloadCapacityForShareRel(shareRel)
+	intra := offset - sharePayloadStart
+	if intra+uint64(plan.chunkLen) > sharePayloadCap {
+		plan.shareCount = 2
+	}
+	return plan
+}
+
+func expectedChunkLen(offset, payloadSize uint64) uint8 {
+	if offset >= payloadSize {
+		return 0
+	}
+	remaining := payloadSize - offset
+	if remaining > 32 {
+		return 32
+	}
+	return uint8(remaining)
 }
 
 func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {

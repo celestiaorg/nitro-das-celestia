@@ -17,10 +17,18 @@ func NewCelestiaValidator(reader types.CelestiaReader) *CelestiaValidator {
 	return &CelestiaValidator{reader: reader}
 }
 
+func parseCertificate(raw []byte) (*cert.CelestiaDACertV1, error) {
+	parsed := &cert.CelestiaDACertV1{}
+	if err := parsed.UnmarshalBinary(raw); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
 func (v *CelestiaValidator) GenerateReadPreimageProof(offset uint64, certificate []byte) containers.PromiseInterface[daprovider.PreimageProofResult] {
 	return containers.DoPromise(context.Background(), func(ctx context.Context) (daprovider.PreimageProofResult, error) {
-		parsed := &cert.CelestiaDACertV1{}
-		if err := parsed.UnmarshalBinary(certificate); err != nil {
+		parsed, err := parseCertificate(certificate)
+		if err != nil {
 			return daprovider.PreimageProofResult{Proof: []byte{}}, err
 		}
 
@@ -35,8 +43,8 @@ func (v *CelestiaValidator) GenerateReadPreimageProof(offset uint64, certificate
 
 func (v *CelestiaValidator) GenerateCertificateValidityProof(certificate []byte) containers.PromiseInterface[daprovider.ValidityProofResult] {
 	return containers.DoPromise(context.Background(), func(ctx context.Context) (daprovider.ValidityProofResult, error) {
-		parsed := &cert.CelestiaDACertV1{}
-		if err := parsed.UnmarshalBinary(certificate); err != nil {
+		parsed, err := parseCertificate(certificate)
+		if err != nil {
 			return daprovider.ValidityProofResult{Proof: []byte{0, 0x01}}, nil
 		}
 

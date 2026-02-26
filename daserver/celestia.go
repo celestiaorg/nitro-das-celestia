@@ -1002,7 +1002,36 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 		return nil, err
 	}
 
-	proofData, err := c.generateCelestiaProof(ctx, certificate)
+	payloadSize := uint64(len(readResult.Message))
+	if offset > payloadSize {
+		return nil, fmt.Errorf("offset out of bounds: offset %d > payload length %d", offset, payloadSize)
+	}
+
+	shareRel := offset / 512
+	firstShareIndex := certificate.Start + shareRel
+	shareCount := uint64(1)
+
+	chunkLen := uint8(0)
+	if offset < payloadSize {
+		remaining := payloadSize - offset
+		if remaining > 32 {
+			chunkLen = 32
+		} else {
+			chunkLen = uint8(remaining)
+		}
+		intra := offset % 512
+		if intra+uint64(chunkLen) > 512 {
+			shareCount = 2
+		}
+	}
+
+	shareStart := firstShareIndex
+	shareEnd := shareStart + shareCount
+	if shareStart < certificate.Start || shareEnd > certificate.Start+certificate.SharesLength {
+		return nil, fmt.Errorf("offset maps outside certificate share range")
+	}
+
+	proofData, err := c.generateCelestiaProof(ctx, certificate, shareStart, shareEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -1010,24 +1039,44 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 		return nil, fmt.Errorf("certificate validation failed")
 	}
 
-	preimage := readResult.Message
-	if offset >= uint64(len(preimage)) {
-		return nil, fmt.Errorf("offset out of bounds: offset %d >= preimage length %d", offset, len(preimage))
-	}
+	return buildReadPreimageProofV1(
+		offset,
+		payloadSize,
+		chunkLen,
+		firstShareIndex,
+		uint8(shareCount),
+		proofData,
+	), nil
+}
+
+func buildReadPreimageProofV1(
+	offset uint64,
+	payloadSize uint64,
+	chunkLen uint8,
+	firstShareIndex uint64,
+	shareCount uint8,
+	sharesProofData []byte,
+) []byte {
 	// Custom proof format (proof enhancer prepends cert metadata at challenge time):
-	// [version(1)=0x01][preimageSize(8)][preimage][celestiaSharesProofData]
-	totalLen := 1 + 8 + len(preimage) + len(proofData)
+	// [version(1)=0x01][offset(8)][payloadSize(8)][chunkLen(1)][firstShareIndexInBlob(8)][shareCount(1)][celestiaSharesProofData]
+	totalLen := 1 + 8 + 8 + 1 + 8 + 1 + len(sharesProofData)
 	proof := make([]byte, totalLen)
 	pos := 0
 
 	proof[pos] = 0x01
 	pos++
-	binary.BigEndian.PutUint64(proof[pos:], uint64(len(preimage)))
+	binary.BigEndian.PutUint64(proof[pos:], offset)
 	pos += 8
-	copy(proof[pos:], preimage)
-	pos += len(preimage)
-	copy(proof[pos:], proofData)
-	return proof, nil
+	binary.BigEndian.PutUint64(proof[pos:], payloadSize)
+	pos += 8
+	proof[pos] = chunkLen
+	pos++
+	binary.BigEndian.PutUint64(proof[pos:], firstShareIndex)
+	pos += 8
+	proof[pos] = shareCount
+	pos++
+	copy(proof[pos:], sharesProofData)
+	return proof
 }
 
 func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
@@ -1197,7 +1246,12 @@ func certificateValidationError(reason string) error {
 	return &daprovider.CertificateValidationError{Reason: fmt.Sprintf("certificate validation failed: %s", reason)}
 }
 
-func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
+func (c *CelestiaDA) generateCelestiaProof(
+	ctx context.Context,
+	certificate *cert.CelestiaDACertV1,
+	shareStart uint64,
+	shareEnd uint64,
+) ([]byte, error) {
 	if c.Cfg.ValidatorConfig.EthClient == "" || c.Cfg.ValidatorConfig.BlobstreamAddr == "" {
 		return nil, fmt.Errorf("no celestia prover config")
 	}
@@ -1300,8 +1354,6 @@ func (c *CelestiaDA) generateCelestiaProof(ctx context.Context, certificate *cer
 		return nil, fmt.Errorf("failed to fetch EDS for share inclusion proof: %w", err)
 	}
 
-	shareStart := certificate.Start
-	shareEnd := certificate.Start + certificate.SharesLength
 	if shareEnd <= shareStart {
 		return nil, fmt.Errorf("invalid share range")
 	}

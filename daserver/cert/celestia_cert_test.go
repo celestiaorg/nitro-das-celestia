@@ -103,3 +103,34 @@ func TestCelestiaDACertV1_UnmarshalErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractFromSequencerMessage(t *testing.T) {
+	var txCommitment [32]byte
+	var dataRoot [32]byte
+	txCommitment[0] = 0x11
+	dataRoot[0] = 0x22
+
+	c := NewCelestiaCertificate(7, 8, 9, txCommitment, dataRoot)
+	certBytes, err := c.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary failed: %v", err)
+	}
+
+	sequencerMsg := make([]byte, SequencerMsgOffset+len(certBytes))
+	copy(sequencerMsg[SequencerMsgOffset:], certBytes)
+
+	parsed, err := ExtractFromSequencerMessage(sequencerMsg)
+	if err != nil {
+		t.Fatalf("ExtractFromSequencerMessage failed: %v", err)
+	}
+
+	if parsed.BlockHeight != 7 || parsed.Start != 8 || parsed.SharesLength != 9 {
+		t.Fatalf("unexpected parsed cert: %+v", parsed)
+	}
+	if parsed.TxCommitment != txCommitment {
+		t.Fatalf("tx commitment mismatch")
+	}
+	if parsed.DataRoot != dataRoot {
+		t.Fatalf("data root mismatch")
+	}
+}

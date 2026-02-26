@@ -22,7 +22,7 @@ import "../lib/DAVerifier.sol";
 /// [certSize(8)][certificate][customProof]
 ///
 /// customProof (read-preimage):
-/// [version(1)=0x01][preimageSize(8)][preimage][abi.encode(address, SharesProof)]
+/// [version(1)=0x01][offset(8)][payloadSize(8)][chunkLen(1)][firstShareIndexInBlob(8)][shareCount(1)][abi.encode(address, SharesProof)]
 ///
 /// customProof (certificate-validity):
 /// [claimedValid(1)][version(1)=0x01]
@@ -36,6 +36,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
 
     uint8 private constant READ_PROOF_VERSION = 0x01;
     uint8 private constant VALIDITY_PROOF_VERSION = 0x01;
+    uint256 private constant CELESTIA_SHARE_SIZE = 512;
 
     address public immutable blobstreamX;
 
@@ -59,20 +60,50 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         _requireValidCertStructure(certificate);
 
         bytes calldata custom = proof[afterCert:];
-        require(custom.length >= 9, "Proof too short: custom read proof header missing");
+        require(custom.length >= 27, "Proof too short: custom read proof header missing");
 
         uint256 pos = 0;
         require(uint8(custom[pos]) == READ_PROOF_VERSION, "Invalid read proof version");
         pos++;
 
-        uint256 preimageSize = uint256(uint64(bytes8(custom[pos:pos + 8])));
+        uint256 proofOffset = uint256(uint64(bytes8(custom[pos:pos + 8])));
+        pos += 8;
+        require(proofOffset == offset, "Offset mismatch");
+
+        uint256 payloadSize = uint256(uint64(bytes8(custom[pos:pos + 8])));
         pos += 8;
 
-        require(custom.length >= pos + preimageSize, "Proof too short: preimage truncated");
-        bytes calldata preimage = custom[pos:pos + preimageSize];
-        pos += preimageSize;
+        uint256 chunkLen = uint8(custom[pos]);
+        pos++;
 
-        // Decode and verify shares-to-dataRoot proof via DAVerifier.
+        uint256 firstShareIndexInBlob = uint256(uint64(bytes8(custom[pos:pos + 8])));
+        pos += 8;
+
+        uint256 shareCount = uint8(custom[pos]);
+        pos++;
+
+        uint256 expectedChunkLen = 0;
+        if (offset < payloadSize) {
+            uint256 remain = payloadSize - offset;
+            expectedChunkLen = remain > 32 ? 32 : remain;
+        }
+        require(chunkLen == expectedChunkLen, "Invalid chunkLen");
+
+        uint256 certStart = uint256(uint64(bytes8(certificate[12:20])));
+        uint256 certSharesLength = uint256(uint64(bytes8(certificate[20:28])));
+        uint64 certHeight = uint64(bytes8(certificate[4:12]));
+        bytes32 certDataRoot = bytes32(certificate[60:92]);
+
+        uint256 shareRel = proofOffset / CELESTIA_SHARE_SIZE;
+        uint256 expectedFirstShareIndex = certStart + shareRel;
+        require(firstShareIndexInBlob == expectedFirstShareIndex, "Invalid firstShareIndexInBlob");
+        require(firstShareIndexInBlob >= certStart, "Share index before cert range");
+        require(
+            firstShareIndexInBlob + shareCount <= certStart + certSharesLength,
+            "Share index past cert range"
+        );
+        require(shareCount == 1 || shareCount == 2, "Invalid shareCount");
+
         bytes calldata sharesProofData = custom[pos:];
         require(sharesProofData.length > 0, "Missing shares proof data");
 
@@ -80,10 +111,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             sharesProofData,
             (address, SharesProof)
         );
-        encodedBlobstream; // ignored; immutable blobstreamX is authoritative.
-
-        uint64 certHeight = uint64(bytes8(certificate[4:12]));
-        bytes32 certDataRoot = bytes32(certificate[60:92]);
+        encodedBlobstream;
 
         require(
             sharesProof.attestationProof.tuple.height == certHeight,
@@ -100,15 +128,37 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         );
         require(valid, "Invalid Celestia shares inclusion proof");
 
-        if (offset >= preimageSize) {
+        require(sharesProof.data.length == shareCount, "Shares count mismatch");
+        for (uint256 i = 0; i < shareCount; i++) {
+            require(sharesProof.data[i].length == CELESTIA_SHARE_SIZE, "Invalid share length");
+        }
+
+        if (chunkLen == 0) {
             return new bytes(0);
         }
 
-        uint256 remaining = preimageSize - offset;
-        uint256 outSize = remaining > 32 ? 32 : remaining;
-        bytes memory out = new bytes(outSize);
-        for (uint256 i = 0; i < outSize; i++) {
-            out[i] = preimage[offset + i];
+        uint256 intra = proofOffset % CELESTIA_SHARE_SIZE;
+        bool crossesBoundary = intra + chunkLen > CELESTIA_SHARE_SIZE;
+        if (crossesBoundary) {
+            require(shareCount == 2, "Missing second share for boundary chunk");
+        } else {
+            require(shareCount == 1, "Unexpected second share");
+        }
+
+        bytes memory out = new bytes(chunkLen);
+        if (!crossesBoundary) {
+            for (uint256 i = 0; i < chunkLen; i++) {
+                out[i] = sharesProof.data[0][intra + i];
+            }
+            return out;
+        }
+
+        uint256 firstPart = CELESTIA_SHARE_SIZE - intra;
+        for (uint256 i = 0; i < firstPart; i++) {
+            out[i] = sharesProof.data[0][intra + i];
+        }
+        for (uint256 i = 0; i < chunkLen - firstPart; i++) {
+            out[firstPart + i] = sharesProof.data[1][i];
         }
         return out;
     }

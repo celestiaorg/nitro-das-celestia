@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
@@ -139,13 +138,8 @@ func RecoverPayloadFromCelestiaBatch(
 		preimageRecorder = daprovider.RecordPreimagesTo(preimages)
 	}
 
-	minLen := cert.SequencerMsgOffset + cert.CelestiaDACertV1Len
-	if len(sequencerMsg) < minLen {
-		return nil, nil, fmt.Errorf("sequencer message too short for Celestia certificate: got %d bytes, need at least %d", len(sequencerMsg), minLen)
-	}
-
-	certificate := &cert.CelestiaDACertV1{}
-	if err := certificate.UnmarshalBinary(sequencerMsg[cert.SequencerMsgOffset:]); err != nil {
+	certificate, err := cert.ExtractFromSequencerMessage(sequencerMsg)
+	if err != nil {
 		return nil, nil, err
 	}
 

@@ -215,31 +215,22 @@ func (serv *DaClientServer) RecoverPayload(
 	batchBlockHash common.Hash,
 	sequencerMsg hexutil.Bytes,
 ) (*daprovider.PayloadResult, error) {
-	log.Info("CelestiaDASRPCServer.RecoverPayload",
-		"batchNum", batchNum,
-		"batchBlockHash", batchBlockHash,
-		"sequencerMsg", sequencerMsg,
-	)
-	// check the header byte before sending out the call
-	daHeaderByte := sequencerMsg[40]
-	certHeaderByte := sequencerMsg[41]
-	if IsCustomDAHeaderByte(daHeaderByte) && IsCelestiaMessageHeaderByte(certHeaderByte)  {
-		log.Info("CelestiaDASRPCServer.RecoverPayload", "daHeaderByte", daHeaderByte, "certHeaderByte", certHeaderByte)
-			promise := serv.reader.RecoverPayload(uint64(batchNum), batchBlockHash, sequencerMsg)
-			result, err := promise.Await(ctx)
-			if err != nil {
-				log.Error("failed to recover payload from Celestia batch",
-					"batchNum", batchNum,
-					"batchBlockHash", batchBlockHash,
-					"sequencerMsg", sequencerMsg,
-					"err", err)
-				return nil, err
-			}
-			log.Info("Recovered Payload from Celestia batch", "len(result.Payload)", len(result.Payload))
-			return &result, nil
+	if _, err := cert.ExtractFromSequencerMessage(sequencerMsg); err != nil {
+		return nil, err
 	}
 
-	return nil, errors.New("unknown batch header byte")
+	promise := serv.reader.RecoverPayload(uint64(batchNum), batchBlockHash, sequencerMsg)
+	result, err := promise.Await(ctx)
+	if err != nil {
+		log.Error(
+			"failed to recover payload from celestia batch",
+			"batchNum", batchNum,
+			"batchBlockHash", batchBlockHash,
+			"err", err,
+		)
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (serv *DaClientServer) CollectPreimages(
@@ -248,6 +239,10 @@ func (serv *DaClientServer) CollectPreimages(
 	batchBlockHash common.Hash,
 	sequencerMsg hexutil.Bytes,
 ) (*daprovider.PreimagesResult, error) {
+	if _, err := cert.ExtractFromSequencerMessage(sequencerMsg); err != nil {
+		return nil, err
+	}
+
 	promise := serv.reader.CollectPreimages(uint64(batchNum), batchBlockHash, sequencerMsg)
 	result, err := promise.Await(ctx)
 	if err != nil {
@@ -262,6 +257,10 @@ func (serv *DaClientServer) RecoverPayloadAndPreimages(
 	batchBlockHash common.Hash,
 	sequencerMsg hexutil.Bytes,
 ) (*daprovider.PayloadAndPreimagesResult, error) {
+	if _, err := cert.ExtractFromSequencerMessage(sequencerMsg); err != nil {
+		return nil, err
+	}
+
 	promise := serv.reader.RecoverPayloadAndPreimages(uint64(batchNum), batchBlockHash, sequencerMsg)
 	result, err := promise.Await(ctx)
 	if err != nil {

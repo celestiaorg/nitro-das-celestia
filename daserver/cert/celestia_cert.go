@@ -13,6 +13,14 @@ const (
 	SequencerMsgOffset        int    = 40
 )
 
+var (
+	ErrInvalidCertificateLength = errors.New("certificate has invalid length")
+	ErrInvalidCertificateHeader = errors.New("invalid certificate header")
+	ErrInvalidProviderType      = errors.New("invalid provider type")
+	ErrUnsupportedCertVersion   = errors.New("unsupported certificate version")
+	ErrSequencerMsgTooShort     = errors.New("sequencer message too short for celestia certificate")
+)
+
 // CelestiaDACertV1 is the Custom DA certificate format for Celestia.
 // Binary layout (big endian):
 // [0]      header (0x01)
@@ -73,22 +81,22 @@ func (c *CelestiaDACertV1) MarshalBinary() ([]byte, error) {
 
 func (c *CelestiaDACertV1) UnmarshalBinary(data []byte) error {
 	if len(data) != CelestiaDACertV1Len {
-		return errors.New("certificate has invalid length")
+		return ErrInvalidCertificateLength
 	}
 	offset := 0
 
 	if data[offset] != CustomDAHeaderFlag {
-		return errors.New("invalid certificate header")
+		return ErrInvalidCertificateHeader
 	}
 	offset++
 	if data[offset] != CelestiaMessageHeaderFlag {
-		return errors.New("invalid provider type")
+		return ErrInvalidProviderType
 	}
 	offset++
 
 	version := binary.BigEndian.Uint16(data[offset:])
 	if version != CelestiaCertVersion {
-		return errors.New("unsupported certificate version")
+		return ErrUnsupportedCertVersion
 	}
 	offset += 2
 
@@ -103,4 +111,19 @@ func (c *CelestiaDACertV1) UnmarshalBinary(data []byte) error {
 	copy(c.DataRoot[:], data[offset:])
 
 	return nil
+}
+
+// ExtractFromSequencerMessage parses a Celestia certificate from a sequencer message
+// that has the standard 40-byte header prefix.
+func ExtractFromSequencerMessage(sequencerMsg []byte) (*CelestiaDACertV1, error) {
+	minLen := SequencerMsgOffset + CelestiaDACertV1Len
+	if len(sequencerMsg) < minLen {
+		return nil, ErrSequencerMsgTooShort
+	}
+
+	certificate := &CelestiaDACertV1{}
+	if err := certificate.UnmarshalBinary(sequencerMsg[SequencerMsgOffset:minLen]); err != nil {
+		return nil, err
+	}
+	return certificate, nil
 }

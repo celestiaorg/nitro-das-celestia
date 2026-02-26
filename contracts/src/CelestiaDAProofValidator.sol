@@ -37,6 +37,11 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     uint8 private constant READ_PROOF_VERSION = 0x01;
     uint8 private constant VALIDITY_PROOF_VERSION = 0x01;
     uint256 private constant CELESTIA_SHARE_SIZE = 512;
+    uint256 private constant CELESTIA_NAMESPACE_SIZE = 29;
+    uint256 private constant CELESTIA_SHARE_INFO_BYTES = 1;
+    uint256 private constant CELESTIA_SEQUENCE_LEN_BYTES = 4;
+    uint256 private constant CELESTIA_PAYLOAD_START =
+        CELESTIA_NAMESPACE_SIZE + CELESTIA_SHARE_INFO_BYTES + CELESTIA_SEQUENCE_LEN_BYTES;
 
     address public immutable blobstreamX;
 
@@ -133,32 +138,32 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             require(sharesProof.data[i].length == CELESTIA_SHARE_SIZE, "Invalid share length");
         }
 
+        // TODO(celestia): Support multi-share payload decoding when payload spans continuation shares.
+        require(shareCount == 1, "Multi-share payloads not supported yet");
+
+        bytes memory share = sharesProof.data[0];
+        require(share.length >= CELESTIA_PAYLOAD_START, "Invalid share header");
+
+        uint256 sequenceLen = (uint256(uint8(share[30])) << 24) |
+            (uint256(uint8(share[31])) << 16) |
+            (uint256(uint8(share[32])) << 8) |
+            uint256(uint8(share[33]));
+        require(
+            sequenceLen + CELESTIA_PAYLOAD_START <= CELESTIA_SHARE_SIZE,
+            "Invalid sequence length in share"
+        );
+        require(payloadSize == sequenceLen, "Payload size mismatch");
+
         if (chunkLen == 0) {
             return new bytes(0);
         }
 
-        uint256 intra = proofOffset % CELESTIA_SHARE_SIZE;
-        bool crossesBoundary = intra + chunkLen > CELESTIA_SHARE_SIZE;
-        if (crossesBoundary) {
-            require(shareCount == 2, "Missing second share for boundary chunk");
-        } else {
-            require(shareCount == 1, "Unexpected second share");
-        }
+        require(offset + chunkLen <= sequenceLen, "Chunk outside payload bounds");
 
         bytes memory out = new bytes(chunkLen);
-        if (!crossesBoundary) {
-            for (uint256 i = 0; i < chunkLen; i++) {
-                out[i] = sharesProof.data[0][intra + i];
-            }
-            return out;
-        }
-
-        uint256 firstPart = CELESTIA_SHARE_SIZE - intra;
-        for (uint256 i = 0; i < firstPart; i++) {
-            out[i] = sharesProof.data[0][intra + i];
-        }
-        for (uint256 i = 0; i < chunkLen - firstPart; i++) {
-            out[firstPart + i] = sharesProof.data[1][i];
+        uint256 payloadOffsetInShare = CELESTIA_PAYLOAD_START + offset;
+        for (uint256 i = 0; i < chunkLen; i++) {
+            out[i] = share[payloadOffsetInShare + i];
         }
         return out;
     }

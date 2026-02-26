@@ -27,16 +27,14 @@ contract CelestiaDAProofValidatorTest is Test {
     NamespaceNode internal rowRoot1;
     bytes32 internal certDataRoot;
     bytes internal validCert;
+    bytes internal payload;
 
     function setUp() public {
         ns = Namespace({version: hex"00", id: bytes28(0)});
 
-        share0 = new bytes(512);
-        share1 = new bytes(512);
-        for (uint256 i = 0; i < 512; i++) {
-            share0[i] = bytes1(uint8(i % 256));
-            share1[i] = bytes1(uint8((i + 17) % 256));
-        }
+        payload = bytes("walkthrough-1772079452815387000");
+        share0 = _buildShareWithPayload(payload);
+        share1 = _buildShareWithPayload(bytes("second-share-payload"));
 
         rowRoot0 = leafDigest(ns, share0);
         rowRoot1 = leafDigest(ns, share1);
@@ -82,28 +80,30 @@ contract CelestiaDAProofValidatorTest is Test {
     }
 
     function test_validateReadPreimage_singleShareChunk() public {
-        uint64 offset = 64;
-        bytes memory proof = _buildReadProof(offset, 600, false, false);
+        uint64 offset = 0;
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         bytes memory out = validator.validateReadPreimage(keccak256(validCert), offset, proof);
 
-        assertEq(out.length, 32);
-        for (uint256 i = 0; i < 32; i++) {
-            assertEq(out[i], share0[offset + i]);
+        assertEq(out.length, payload.length);
+        for (uint256 i = 0; i < payload.length; i++) {
+            assertEq(out[i], payload[i]);
         }
     }
 
-    function test_validateReadPreimage_crossShareChunk() public {
-        uint64 offset = 500;
-        bytes memory proof = _buildReadProof(offset, 560, false, false);
+    function test_validateReadPreimage_offset30_returnsSingleByte() public {
+        uint64 offset = 30;
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         bytes memory out = validator.validateReadPreimage(keccak256(validCert), offset, proof);
 
-        assertEq(out.length, 32);
-        for (uint256 i = 0; i < 12; i++) {
-            assertEq(out[i], share0[500 + i]);
-        }
-        for (uint256 i = 0; i < 20; i++) {
-            assertEq(out[12 + i], share1[i]);
-        }
+        assertEq(out.length, 1);
+        assertEq(out[0], payload[30]);
+    }
+
+    function test_validateReadPreimage_crossShareChunk_revertsForNow() public {
+        uint64 offset = 500;
+        bytes memory proof = _buildReadProof(offset, 560, false, false);
+        vm.expectRevert("Multi-share payloads not supported yet");
+        validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
 
     function test_validateReadPreimage_wrongCertHash_reverts() public {
@@ -154,7 +154,7 @@ contract CelestiaDAProofValidatorTest is Test {
         bytes[] memory data = new bytes[](shareCount);
         data[0] = share0;
         if (shareCount == 2) data[1] = share1;
-        if (tamperProof) data[0][0] = bytes1(uint8(data[0][0]) ^ 0x01);
+        if (tamperProof) data[0][40] = bytes1(uint8(data[0][40]) ^ 0x01);
 
         NamespaceMerkleMultiproof[] memory shareProofs = new NamespaceMerkleMultiproof[](shareCount);
         NamespaceNode[] memory noSide = new NamespaceNode[](0);
@@ -245,5 +245,20 @@ contract CelestiaDAProofValidatorTest is Test {
             txc,
             dataRoot
         );
+    }
+
+    function _buildShareWithPayload(bytes memory pl) internal pure returns (bytes memory) {
+        bytes memory s = new bytes(512);
+        // Namespace (29 bytes) defaults to 0x00 to match `ns` in setup.
+        s[29] = bytes1(0x01); // info byte
+        uint32 len = uint32(pl.length);
+        s[30] = bytes1(uint8(len >> 24));
+        s[31] = bytes1(uint8(len >> 16));
+        s[32] = bytes1(uint8(len >> 8));
+        s[33] = bytes1(uint8(len));
+        for (uint256 i = 0; i < pl.length; i++) {
+            s[34 + i] = pl[i];
+        }
+        return s;
     }
 }

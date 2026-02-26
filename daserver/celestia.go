@@ -7,14 +7,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"math/rand"
+	"net"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	awskeyring "github.com/celestiaorg/aws-kms-keyring"
+	"github.com/celestiaorg/celestia-app/v6/pkg/appconsts"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -22,9 +25,11 @@ import (
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
-	"github.com/celestiaorg/nitro-das-celestia/celestiagen"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
 	"github.com/celestiaorg/rsmt2d"
+	"github.com/cometbft/cometbft/crypto/merkle"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -32,6 +37,8 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/offchainlabs/nitro/arbutil"
+	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/spf13/pflag"
 
 	blobstreamx "github.com/succinctlabs/sp1-blobstream/bindings"
@@ -135,16 +142,27 @@ var (
 	ErrTxIncorrectAccountSequence = errors.New("incorrect account sequence")
 )
 
-// CelestiaMessageHeaderFlag indicates that this data is a Blob Pointer
-// which will be used to retrieve data from Celestia
-const CelestiaMessageHeaderFlag byte = 0x63
+const (
+	celestiaShareSize              uint64 = 512
+	celestiaNamespaceSize          uint64 = 29
+	celestiaShareInfoBytes         uint64 = 1
+	celestiaSequenceLenBytes       uint64 = 4
+	celestiaFirstSharePayloadStart uint64 = celestiaNamespaceSize + celestiaShareInfoBytes + celestiaSequenceLenBytes
+	celestiaContSharePayloadStart  uint64 = celestiaNamespaceSize + celestiaShareInfoBytes
+	celestiaFirstSharePayloadCap   uint64 = celestiaShareSize - celestiaFirstSharePayloadStart
+	celestiaContSharePayloadCap    uint64 = celestiaShareSize - celestiaContSharePayloadStart
+)
 
 func hasBits(checking byte, bits byte) bool {
 	return (checking & bits) == bits
 }
 
 func IsCelestiaMessageHeaderByte(header byte) bool {
-	return hasBits(header, CelestiaMessageHeaderFlag)
+	return hasBits(header, cert.CelestiaMessageHeaderFlag)
+}
+
+func IsCustomDAHeaderByte(header byte) bool {
+	return hasBits(header, cert.CustomDAHeaderFlag)
 }
 
 type CelestiaDA struct {
@@ -156,6 +174,29 @@ type CelestiaDA struct {
 	Namespace *libshare.Namespace
 
 	messageCache sync.Map
+}
+
+func (c *CelestiaDA) MaxMessageSize(ctx context.Context) (int, error) {
+	// Prefer querying the live node via DA.MaxBlobSize so the value stays in
+	// sync with whatever the connected node / app version reports.
+	// c.Client is only set when WithWriter=true and ExperimentalTxClient=false;
+	// fall back to the compile-time constant for read-only or gRPC writer mode.
+	//
+	// TODO(future): This returns a single-blob limit. Consider making it
+	// dynamically computed to support:
+	//   - Multi-blob batches (batches larger than one blob, split across
+	//     multiple Celestia blobs and reassembled on read)
+	//   - FIBRE or other custom backends with different per-message limits
+	// Until then, the single-blob size reported by the connected node is the
+	// correct upper bound for a sequencer batch.
+	if c.Client != nil {
+		maxSize, err := c.Client.DA.MaxBlobSize(ctx)
+		if err == nil {
+			return int(maxSize), nil
+		}
+		log.Warn("DA.MaxBlobSize RPC failed, falling back to appconsts", "err", err)
+	}
+	return int(appconsts.DefaultMaxBytes), nil
 }
 
 func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
@@ -249,6 +290,10 @@ func initKeyring(ctx context.Context, cfg *DAConfig) (keyring.Keyring, error) {
 func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 	if cfg == nil {
 		return nil, errors.New("celestia cfg cannot be blank")
+	}
+
+	if cfg.RetryConfig.MaxRetries <= 0 {
+		cfg.RetryConfig = DefaultCelestiaRetryConfig
 	}
 
 	if cfg.NamespaceId == "" {
@@ -362,10 +407,16 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 }
 
 func (c *CelestiaDA) Stop() error {
-	c.Client.Close()
-	c.ReadClient.Close()
+	if c.Client != nil {
+		c.Client.Close()
+	}
+	if c.ReadClient != nil {
+		c.ReadClient.Close()
+	}
 	if c.Cfg.ExperimentalTxClient {
-		c.TxClient.Close()
+		if c.TxClient != nil {
+			c.TxClient.Close()
+		}
 	}
 	return nil
 }
@@ -397,7 +448,6 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	// Create hash of message to use as cache key
 	msgHash := crypto.Keccak256(message)
 	msgHashHex := hex.EncodeToString(msgHash)
-
 	// Check cache first
 	if pointer, ok := c.messageCache.Load(msgHashHex); ok {
 		log.Info("Retrieved blob pointer from cache", "msgHash", msgHashHex)
@@ -513,55 +563,39 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	}
 
 	startIndexOds := blobIndex - odsSize*startRow
-	blobPointer := types.BlobPointer{
-		BlockHeight:  height,
-		Start:        startIndexOds,
-		SharesLength: uint64(sharesLength),
-		TxCommitment: txCommitment,
-		DataRoot:     dataRoot,
-	}
-	log.Info("Posted blob to height and dataRoot", "height", blobPointer.BlockHeight, "dataRoot", hex.EncodeToString(blobPointer.DataRoot[:]))
 
-	blobPointerData, err := blobPointer.MarshalBinary()
+	certificate := cert.NewCelestiaCertificate(
+		height,
+		startIndexOds,
+		uint64(sharesLength),
+		txCommitment,
+		dataRoot,
+	)
+
+	serializedCert, err := certificate.MarshalBinary()
 	if err != nil {
 		celestiaFailureCounter.Inc(1)
-		log.Warn("BlobPointer MashalBinary error", "err", err)
+		log.Warn("certificate serialization failed", "err", err)
 		return nil, err
 	}
+	log.Info("Posted blob to height and dataRoot", "height", certificate.BlockHeight, "dataRoot", hex.EncodeToString(certificate.DataRoot[:]))
 
-	buf := new(bytes.Buffer)
-	err = binary.Write(buf, binary.BigEndian, CelestiaMessageHeaderFlag)
-	if err != nil {
-		celestiaFailureCounter.Inc(1)
-		log.Warn("batch type byte serialization failed", "err", err)
-		return nil, err
-	}
-
-	err = binary.Write(buf, binary.BigEndian, blobPointerData)
-	if err != nil {
-		celestiaFailureCounter.Inc(1)
-		log.Warn("blob pointer data serialization failed", "err", err)
-		return nil, err
-	}
-
-	serializedBlobPointerData := buf.Bytes()
-
-	c.messageCache.Store(msgHashHex, serializedBlobPointerData)
+	c.messageCache.Store(msgHashHex, serializedCert)
 
 	celestiaSuccessCounter.Inc(1)
 	celestiaDALastSuccesfulActionGauge.Update(time.Now().Unix())
 
-	return serializedBlobPointerData, nil
+	return serializedCert, nil
 }
 
-func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (*types.ReadResult, error) {
+func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV1) (*types.ReadResult, error) {
 
 	log.Info("reading blob pointer",
-		"blockHeight", blobPointer.BlockHeight,
-		"start", blobPointer.Start,
-		"sharesLength", blobPointer.SharesLength,
-		"dataRoot", hex.EncodeToString(blobPointer.DataRoot[:]),
-		"txCommitment", hex.EncodeToString(blobPointer.TxCommitment[:]),
+		"blockHeight", certificate.BlockHeight,
+		"start", certificate.Start,
+		"sharesLength", certificate.SharesLength,
+		"dataRoot", hex.EncodeToString(certificate.DataRoot[:]),
+		"txCommitment", hex.EncodeToString(certificate.TxCommitment[:]),
 	)
 
 	// Add timeout to the context
@@ -611,9 +645,9 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (
 	var header *header.ExtendedHeader
 	err := retryWithBackoff(func() error {
 		var err error
-		header, err = c.ReadClient.Header.GetByHeight(ctx, blobPointer.BlockHeight)
+		header, err = c.ReadClient.Header.GetByHeight(ctx, certificate.BlockHeight)
 		if err != nil {
-			log.Warn("could not fetch header", "height", blobPointer.BlockHeight, "err", err)
+			log.Warn("could not fetch header", "height", certificate.BlockHeight, "err", err)
 			return err
 		}
 		return nil
@@ -625,15 +659,15 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (
 	// Validate data root
 	headerDataHash := [32]byte{}
 	copy(headerDataHash[:], header.DataHash)
-	if headerDataHash != blobPointer.DataRoot {
-		return nil, fmt.Errorf("data Root mismatch, header.DataHash=%v, blobPointer.DataRoot=%v", header.DataHash, hex.EncodeToString(blobPointer.DataRoot[:]))
+	if headerDataHash != certificate.DataRoot {
+		return nil, certificateValidationError("data root mismatch")
 	}
 
 	// Fetch blob with retry
 	var blobData []byte
 	var sharesLength int
 	err = retryWithBackoff(func() error {
-		blob, err := c.ReadClient.Blob.Get(ctx, blobPointer.BlockHeight, *c.Namespace, blobPointer.TxCommitment[:])
+		blob, err := c.ReadClient.Blob.Get(ctx, certificate.BlockHeight, *c.Namespace, certificate.TxCommitment[:])
 		if err != nil {
 			return err
 		}
@@ -659,9 +693,9 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (
 	var extendedSquare *rsmt2d.ExtendedDataSquare
 	err = retryWithBackoff(func() error {
 		var err error
-		extendedSquare, err = c.ReadClient.Share.GetEDS(ctx, blobPointer.BlockHeight)
+		extendedSquare, err = c.ReadClient.Share.GetEDS(ctx, certificate.BlockHeight)
 		if err != nil {
-			return fmt.Errorf("failed to get EDS, height=%v: %w", blobPointer.BlockHeight, err)
+			return fmt.Errorf("failed to get EDS, height=%v: %w", certificate.BlockHeight, err)
 		}
 		return nil
 	})
@@ -672,37 +706,37 @@ func (c *CelestiaDA) Read(ctx context.Context, blobPointer *types.BlobPointer) (
 	// Validation logic (no changes needed here)
 	squareSize := uint64(len(header.DAH.RowRoots))
 	odsSize := squareSize / 2
-	startRow := blobPointer.Start / odsSize
+	startRow := certificate.Start / odsSize
 
-	if blobPointer.Start >= odsSize*odsSize {
-		return nil, fmt.Errorf("startIndexOds >= odsSize*odsSize, startIndexOds=%v, odsSize*odsSize=%v", blobPointer.Start, odsSize*odsSize)
+	if certificate.Start >= odsSize*odsSize {
+		return nil, certificateValidationError("start index out of bounds")
 	}
 
-	if blobPointer.Start+blobPointer.SharesLength < 1 {
-		return nil, fmt.Errorf("startIndexOds+blobPointer.SharesLength < 1, startIndexOds+blobPointer.SharesLength=%v", blobPointer.Start+blobPointer.SharesLength)
+	if certificate.Start+certificate.SharesLength < 1 {
+		return nil, certificateValidationError("share range underflow")
 	}
 
-	endIndexOds := blobPointer.Start + blobPointer.SharesLength - 1
+	endIndexOds := certificate.Start + certificate.SharesLength - 1
 	if endIndexOds >= odsSize*odsSize {
-		return nil, fmt.Errorf("endIndexOds >= odsSize*odsSize, endIndexOds=%v, odsSize*odsSize=%v", endIndexOds, odsSize*odsSize)
+		return nil, certificateValidationError("share range out of bounds")
 	}
 
 	endRow := endIndexOds / odsSize
 
 	if endRow >= odsSize || startRow >= odsSize {
-		return nil, fmt.Errorf("endRow >= odsSize || startRow >= odsSize, endRow=%v, startRow=%v, odsSize=%v", endRow, startRow, odsSize)
+		return nil, certificateValidationError("row index out of bounds")
 	}
 
-	startColumn := blobPointer.Start % odsSize
+	startColumn := certificate.Start % odsSize
 	endColumn := endIndexOds % odsSize
 
 	if startRow == endRow && startColumn > endColumn {
-		return nil, fmt.Errorf("start and end row are the same and startColumn >= endColumn, startColumn=%v, endColumn+1=%v", startColumn, endColumn+1)
+		return nil, certificateValidationError("invalid share range ordering")
 	}
 
-	if uint64(sharesLength) != blobPointer.SharesLength || sharesLength == 0 {
+	if uint64(sharesLength) != certificate.SharesLength || sharesLength == 0 {
 		celestiaFailureCounter.Inc(1)
-		return nil, fmt.Errorf("share length mismatch, sharesLength=%v, blobPointer.SharesLength=%v", sharesLength, blobPointer.SharesLength)
+		return nil, certificateValidationError("share length mismatch")
 	}
 
 	rows := [][][]byte{}
@@ -838,29 +872,26 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	log.Info("Verified Celestia Attestation", "height", blobPointer.BlockHeight, "valid", valid)
 
 	if valid {
-		rangeResult, err := c.ReadClient.Share.GetRange(ctx, blobPointer.BlockHeight, int(blobPointer.Start), int(blobPointer.Start+blobPointer.SharesLength))
-		if err != nil {
-			celestiaValidationFailureCounter.Inc(1)
-			log.Error("Unable to get ShareProof", "err", err)
-			return nil, err
+		squareSize := uint64(len(header.DAH.RowRoots))
+		odsSize := squareSize / 2
+		if odsSize == 0 {
+			return nil, fmt.Errorf("invalid ods size")
+		}
+		if blobPointer.Start >= odsSize*odsSize {
+			return nil, fmt.Errorf("start index out of bounds")
+		}
+		startRow := blobPointer.Start / odsSize
+		if startRow >= uint64(len(header.DAH.RowRoots)) {
+			return nil, fmt.Errorf("row index out of bounds")
 		}
 
-		sharesProof := rangeResult.Proof
+		rowRoot := header.DAH.RowRoots[startRow]
+		_, allProofs := merkle.ProofsFromByteSlices(append(header.DAH.RowRoots, header.DAH.ColumnRoots...))
+		rowProof := toRowProofs(allProofs[startRow])
+		namespaceNode := toNamespaceNode(rowRoot)
+		attestationProof := toAttestationProof(event.ProofNonce.Uint64(), blobPointer.BlockHeight, [32]byte(header.DataHash), dataRootProof)
 
-		namespaceNode := toNamespaceNode(sharesProof.RowProof.RowRoots[0])
-		rowProof := toRowProofs((sharesProof.RowProof.Proofs[0]))
-		attestationProof := toAttestationProof(event.ProofNonce.Uint64(), blobPointer.BlockHeight, blobPointer.DataRoot, dataRootProof)
-
-		celestiaVerifierAbi, err := celestiagen.CelestiaBatchVerifierMetaData.GetAbi()
-		if err != nil {
-			celestiaValidationFailureCounter.Inc(1)
-			log.Error("Could not get ABI for Celestia Batch Verifier", "err", err)
-			return nil, err
-		}
-
-		verifyProofABI := celestiaVerifierAbi.Methods["verifyProof"]
-
-		proofData, err := verifyProofABI.Inputs.Pack(
+		proofData, err := packBlobstreamProof(
 			common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), namespaceNode, rowProof, attestationProof,
 		)
 		if err != nil {
@@ -962,4 +993,483 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 			end = latestBlockNumber
 		}
 	}
+}
+
+func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint64, certificate *cert.CelestiaDACertV1) ([]byte, error) {
+	if offset%32 != 0 {
+		return nil, fmt.Errorf("offset must be 32-byte aligned")
+	}
+
+	readResult, err := c.Read(ctx, certificate)
+	if err != nil {
+		return nil, err
+	}
+	if len(readResult.Message) == 0 {
+		return nil, errors.New("empty payload returned from celestia")
+	}
+
+	if err := validateReadResult(readResult, certificate); err != nil {
+		return nil, err
+	}
+
+	payloadSize := uint64(len(readResult.Message))
+	if offset > payloadSize {
+		return nil, fmt.Errorf("offset out of bounds: offset %d > payload length %d", offset, payloadSize)
+	}
+
+	plan := buildReadChunkPlan(offset, payloadSize, certificate.Start)
+
+	shareStart := plan.firstShareIndex
+	shareEnd := shareStart + plan.shareCount
+	if shareStart < certificate.Start || shareEnd > certificate.Start+certificate.SharesLength {
+		return nil, fmt.Errorf("offset maps outside certificate share range")
+	}
+
+	proofData, err := c.generateCelestiaProof(ctx, certificate, shareStart, shareEnd)
+	if err != nil {
+		return nil, err
+	}
+	if len(proofData) == 0 {
+		return nil, fmt.Errorf("certificate validation failed")
+	}
+
+	return buildReadPreimageProofV1(
+		offset,
+		payloadSize,
+		plan.chunkLen,
+		plan.firstShareIndex,
+		uint8(plan.shareCount),
+		proofData,
+	), nil
+}
+
+func buildReadPreimageProofV1(
+	offset uint64,
+	payloadSize uint64,
+	chunkLen uint8,
+	firstShareIndex uint64,
+	shareCount uint8,
+	sharesProofData []byte,
+) []byte {
+	// Custom proof format (proof enhancer prepends cert metadata at challenge time):
+	// [version(1)=0x01][offset(8)][payloadSize(8)][chunkLen(1)][firstShareIndexInBlob(8)][shareCount(1)][celestiaSharesProofData]
+	totalLen := 1 + 8 + 8 + 1 + 8 + 1 + len(sharesProofData)
+	proof := make([]byte, totalLen)
+	pos := 0
+
+	proof[pos] = 0x01
+	pos++
+	binary.BigEndian.PutUint64(proof[pos:], offset)
+	pos += 8
+	binary.BigEndian.PutUint64(proof[pos:], payloadSize)
+	pos += 8
+	proof[pos] = chunkLen
+	pos++
+	binary.BigEndian.PutUint64(proof[pos:], firstShareIndex)
+	pos += 8
+	proof[pos] = shareCount
+	pos++
+	copy(proof[pos:], sharesProofData)
+	return proof
+}
+
+func payloadOffsetToShareRel(offset uint64) uint64 {
+	// Celestia payload layout:
+	// - First share carries 478 payload bytes (512 - 29 namespace - 1 info - 4 sequence length)
+	// - Continuation shares carry 482 payload bytes (512 - 29 namespace - 1 info)
+	if offset < celestiaFirstSharePayloadCap {
+		return 0
+	}
+	return 1 + (offset-celestiaFirstSharePayloadCap)/celestiaContSharePayloadCap
+}
+
+func payloadStartForShareRel(shareRel uint64) uint64 {
+	if shareRel == 0 {
+		return 0
+	}
+	return celestiaFirstSharePayloadCap + (shareRel-1)*celestiaContSharePayloadCap
+}
+
+func payloadCapacityForShareRel(shareRel uint64) uint64 {
+	if shareRel == 0 {
+		return celestiaFirstSharePayloadCap
+	}
+	return celestiaContSharePayloadCap
+}
+
+type readChunkPlan struct {
+	chunkLen        uint8
+	firstShareIndex uint64
+	shareCount      uint64
+}
+
+func buildReadChunkPlan(offset, payloadSize, certStart uint64) readChunkPlan {
+	shareRel := payloadOffsetToShareRel(offset)
+	plan := readChunkPlan{
+		chunkLen:        expectedChunkLen(offset, payloadSize),
+		firstShareIndex: certStart + shareRel,
+		shareCount:      1,
+	}
+	if plan.chunkLen == 0 {
+		return plan
+	}
+
+	sharePayloadStart := payloadStartForShareRel(shareRel)
+	sharePayloadCap := payloadCapacityForShareRel(shareRel)
+	intra := offset - sharePayloadStart
+	if intra+uint64(plan.chunkLen) > sharePayloadCap {
+		plan.shareCount = 2
+	}
+	return plan
+}
+
+func expectedChunkLen(offset, payloadSize uint64) uint8 {
+	if offset >= payloadSize {
+		return 0
+	}
+	remaining := payloadSize - offset
+	if remaining > 32 {
+		return 32
+	}
+	return uint8(remaining)
+}
+
+func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
+	valid, err := c.validateCertificate(ctx, certificate)
+	if err != nil {
+		// Return transient errors to the caller so the RPC layer can distinguish
+		// them from a definitive invalidity signal.
+		return nil, err
+	}
+
+	// Custom validity proof format:
+	// [claimedValid(1)][version(1)=0x01]
+	proof := make([]byte, 2)
+	if valid {
+		proof[0] = 0x01
+	} else {
+		proof[0] = 0x00
+	}
+	proof[1] = 0x01
+	return proof, nil
+}
+
+func validateReadResult(result *types.ReadResult, certificate *cert.CelestiaDACertV1) error {
+	if result.SquareSize == 0 {
+		return fmt.Errorf("invalid square size")
+	}
+
+	odsSize := result.SquareSize / 2
+	if odsSize == 0 {
+		return fmt.Errorf("invalid ods size")
+	}
+
+	rowCount := uint64(len(result.RowRoots))
+	if rowCount == 0 || len(result.ColumnRoots) != int(rowCount) {
+		return fmt.Errorf("invalid root set")
+	}
+	if result.StartRow >= rowCount || result.EndRow >= rowCount {
+		return fmt.Errorf("row index out of bounds")
+	}
+	if result.StartRow+uint64(len(result.Rows)) > rowCount {
+		return fmt.Errorf("row range exceeds available roots")
+	}
+
+	record := func(_ common.Hash, _ []byte, _ arbutil.PreimageType) {}
+	rowIndex := result.StartRow
+	for _, row := range result.Rows {
+		treeConstructor := tree.NewConstructor(record, odsSize)
+		root, err := tree.ComputeNmtRoot(treeConstructor, uint(rowIndex), row)
+		if err != nil {
+			return fmt.Errorf("failed to compute row root: %w", err)
+		}
+		if !bytes.Equal(result.RowRoots[rowIndex], root) {
+			return fmt.Errorf("row root mismatch")
+		}
+		rowIndex++
+	}
+
+	slices := make([][]byte, rowCount+rowCount)
+	copy(slices[:rowCount], result.RowRoots)
+	copy(slices[rowCount:], result.ColumnRoots)
+	dataRoot := tree.HashFromByteSlices(record, slices)
+	if !bytes.Equal(dataRoot, certificate.DataRoot[:]) {
+		return fmt.Errorf("data root mismatch")
+	}
+	return nil
+}
+
+func (c *CelestiaDA) validateCertificate(ctx context.Context, certificate *cert.CelestiaDACertV1) (bool, error) {
+	if certificate == nil {
+		return false, nil
+	}
+
+	if certificate.SharesLength == 0 {
+		return false, nil
+	}
+
+	if bytes.Equal(certificate.TxCommitment[:], make([]byte, 32)) {
+		return false, nil
+	}
+
+	if bytes.Equal(certificate.DataRoot[:], make([]byte, 32)) {
+		return false, nil
+	}
+	header, err := c.ReadClient.Header.GetByHeight(ctx, certificate.BlockHeight)
+	if err != nil {
+		if isTransientError(err) {
+			return false, err
+		}
+		return false, nil
+	}
+
+	if !bytes.Equal(header.DataHash, certificate.DataRoot[:]) {
+		return false, nil
+	}
+
+	squareSize := uint64(len(header.DAH.RowRoots))
+	if squareSize == 0 {
+		return false, nil
+	}
+	odsSize := squareSize / 2
+	if odsSize == 0 {
+		return false, nil
+	}
+
+	if certificate.Start >= odsSize*odsSize {
+		return false, nil
+	}
+
+	if certificate.Start+certificate.SharesLength < 1 {
+		return false, nil
+	}
+
+	endIndexOds := certificate.Start + certificate.SharesLength - 1
+	if endIndexOds >= odsSize*odsSize {
+		return false, nil
+	}
+
+	blobData, err := c.ReadClient.Blob.Get(ctx, certificate.BlockHeight, *c.Namespace, certificate.TxCommitment[:])
+	if err != nil {
+		if isTransientError(err) {
+			return false, err
+		}
+		return false, nil
+	}
+	if blobData == nil {
+		return false, nil
+	}
+
+	length, err := blobData.Length()
+	if err != nil {
+		if isTransientError(err) {
+			return false, err
+		}
+		return false, nil
+	}
+	if length == 0 || uint64(length) != certificate.SharesLength {
+		return false, nil
+	}
+	blobIndex := uint64(blobData.Index())
+	startRow := blobIndex / squareSize
+	if odsSize*startRow > blobIndex {
+		return false, nil
+	}
+	startIndexOds := blobIndex - odsSize*startRow
+	if startIndexOds != certificate.Start {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout() || netErr.Temporary()
+	}
+	return false
+}
+
+func certificateValidationError(reason string) error {
+	return &daprovider.CertificateValidationError{Reason: fmt.Sprintf("certificate validation failed: %s", reason)}
+}
+
+func (c *CelestiaDA) generateCelestiaProof(
+	ctx context.Context,
+	certificate *cert.CelestiaDACertV1,
+	shareStart uint64,
+	shareEnd uint64,
+) ([]byte, error) {
+	if c.Cfg.ValidatorConfig.EthClient == "" || c.Cfg.ValidatorConfig.BlobstreamAddr == "" {
+		return nil, fmt.Errorf("no celestia prover config")
+	}
+
+	ethRpc, err := ethclient.Dial(c.Cfg.ValidatorConfig.EthClient)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Couldn't dial to eth rpc for Blobstream proof", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
+		return nil, err
+	}
+	defer ethRpc.Close()
+
+	blobstream, err := blobstreamx.NewBindings(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Couldn't instantiate client for blobstream", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "blobstreamAddr", common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), "err", err)
+		return nil, err
+	}
+
+	header, err := c.ReadClient.Header.GetByHeight(ctx, certificate.BlockHeight)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Warn("Header retrieval error", "err", err)
+		return nil, err
+	}
+
+	latestBlockNumber, err := ethRpc.BlockNumber(context.Background())
+	if err != nil {
+		log.Warn("could not fetch latest L1 block", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
+		Pending:     false,
+		BlockNumber: big.NewInt(int64(latestBlockNumber)),
+		Context:     ctx,
+	})
+	if err != nil {
+		log.Warn("could not fetch latestBlock on BlobstreamX", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	backwards := certificate.BlockHeight < latestCelestiaBlock
+
+	event, err := c.filter(ctx, ethRpc, blobstream, latestBlockNumber, certificate.BlockHeight, backwards)
+	if err != nil {
+		log.Warn("event filtering error", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(ctx, certificate.BlockHeight, event.StartBlock, event.EndBlock)
+	if err != nil {
+		log.Warn("could not get data root proof", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	sideNodes := make([][32]byte, len((*dataRootProof).Aunts))
+	for i, aunt := range (*dataRootProof).Aunts {
+		sideNodes[i] = *(*[32]byte)(aunt)
+	}
+
+	tuple := blobstreamx.DataRootTuple{
+		Height:   big.NewInt(int64(certificate.BlockHeight)),
+		DataRoot: [32]byte(header.DataHash),
+	}
+
+	proof := blobstreamx.BinaryMerkleProof{
+		SideNodes: sideNodes,
+		Key:       big.NewInt((*dataRootProof).Index),
+		NumLeaves: big.NewInt((*dataRootProof).Total),
+	}
+
+	valid, err := blobstream.VerifyAttestation(
+		&bind.CallOpts{},
+		event.ProofNonce,
+		tuple,
+		proof,
+	)
+	if err != nil {
+		log.Warn("could not verify attestation", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	log.Info("Verified Celestia Attestation", "height", certificate.BlockHeight, "valid", valid)
+
+	if !valid {
+		return nil, nil
+	}
+
+	attestationProof := toAttestationProof(event.ProofNonce.Uint64(), certificate.BlockHeight, [32]byte(header.DataHash), dataRootProof)
+
+	if shareEnd <= shareStart {
+		return nil, fmt.Errorf("invalid share range")
+	}
+	if shareEnd > uint64(math.MaxInt) {
+		return nil, fmt.Errorf("share range exceeds supported int size")
+	}
+
+	rangeResult, err := c.ReadClient.Share.GetRange(ctx, certificate.BlockHeight, int(shareStart), int(shareEnd))
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, fmt.Errorf("failed to fetch share range proof: %w", err)
+	}
+	if rangeResult == nil || rangeResult.Proof == nil {
+		return nil, fmt.Errorf("share range proof missing")
+	}
+	if err := rangeResult.Verify(header.DataHash); err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, fmt.Errorf("share range verification failed: %w", err)
+	}
+	shareProof := rangeResult.Proof
+	if len(shareProof.RowProof.Proofs) == 0 || len(shareProof.RowProof.RowRoots) == 0 {
+		return nil, fmt.Errorf("share inclusion proof missing row proof")
+	}
+
+	var nsID [28]byte
+	copy(nsID[:], shareProof.NamespaceID)
+	sharesProof := SharesProof{
+		Data:        shareProof.Data,
+		ShareProofs: make([]NamespaceMerkleMultiproof, 0, len(shareProof.ShareProofs)),
+		Namespace: Namespace{
+			Version: [1]byte{byte(shareProof.NamespaceVersion)},
+			Id:      nsID,
+		},
+		RowRoots:         make([]NamespaceNode, 0, len(shareProof.RowProof.RowRoots)),
+		RowProofs:        make([]BinaryMerkleProof, 0, len(shareProof.RowProof.Proofs)),
+		AttestationProof: attestationProof,
+	}
+
+	for _, sp := range shareProof.ShareProofs {
+		sideNodes := make([]NamespaceNode, 0, len(sp.Nodes))
+		for _, nodeBytes := range sp.Nodes {
+			sideNodes = append(sideNodes, toNamespaceNode(nodeBytes))
+		}
+		sharesProof.ShareProofs = append(sharesProof.ShareProofs, NamespaceMerkleMultiproof{
+			BeginKey:  big.NewInt(int64(sp.Start)),
+			EndKey:    big.NewInt(int64(sp.End)),
+			SideNodes: sideNodes,
+		})
+	}
+	for _, rr := range shareProof.RowProof.RowRoots {
+		sharesProof.RowRoots = append(sharesProof.RowRoots, toNamespaceNode(rr))
+	}
+	for _, rp := range shareProof.RowProof.Proofs {
+		sharesProof.RowProofs = append(sharesProof.RowProofs, toRowProofs(rp))
+	}
+
+	proofData, err := packSharesProof(
+		common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr),
+		sharesProof,
+	)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Could not pack shares proof structs into ABI", "err", err)
+		return nil, err
+	}
+
+	celestiaValidationSuccessCounter.Inc(1)
+	celestiaValidationLastSuccesfulActionGauge.Update(time.Now().Unix())
+	return proofData, nil
 }

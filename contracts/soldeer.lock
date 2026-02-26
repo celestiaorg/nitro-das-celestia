@@ -1,0 +1,20 @@
+[[dependencies]]
+name = "@nitro-contracts"
+version = "3.2.0"
+url = "https://github.com/OffchainLabs/nitro-contracts/archive/refs/tags/v3.2.0.zip"
+checksum = "278074f7bf60723fa17531fd5346c2466c94c61943855854ef6568b79e7a964b"
+integrity = "5805827a14569e798c4b57db63a7c885ddc2a4e26b3a5484dfeffd86c450e76b"
+
+[[dependencies]]
+name = "@openzeppelin-contracts"
+version = "4.9.6"
+url = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/4_9_6_14-03-2024_06:11:55_contracts.zip"
+checksum = "57f2cae4b45b91b0847e58c36ea70aee0fb3212cc09b47279627f0764f87e5ee"
+integrity = "861134d6a3739362ce5ef6541538e23ca1df10ec47151f105057bea0bb710330"
+
+[[dependencies]]
+name = "forge-std"
+version = "1.7.6"
+url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_7_6_27-02-2024_19:21:42_forge-std-v1.7.6.zip"
+checksum = "4fd381fa355ae3aae5d5f6010a906ad5202b0e46f707cca3603c352f8e57bb06"
+integrity = "a7c37234f14e22f9681291679847b2dafadd249d5b563dab17f086be0bd45723"

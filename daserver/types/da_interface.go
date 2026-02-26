@@ -2,10 +2,13 @@ package types
 
 import (
 	"context"
+
+	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 )
 
 type CelestiaWriter interface {
 	Store(context.Context, []byte) ([]byte, error)
+	MaxMessageSize(context.Context) (int, error)
 }
 
 type ReadResult struct {
@@ -19,6 +22,8 @@ type ReadResult struct {
 }
 
 type CelestiaReader interface {
-	Read(ctx context.Context, blobPointer *BlobPointer) (*ReadResult, error)
+	Read(ctx context.Context, cert *cert.CelestiaDACertV1) (*ReadResult, error)
 	GetProof(ctx context.Context, msg []byte) ([]byte, error)
+	GenerateReadPreimageProof(ctx context.Context, offset uint64, certificate *cert.CelestiaDACertV1) ([]byte, error)
+	GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error)
 }

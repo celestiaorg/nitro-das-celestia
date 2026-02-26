@@ -1,3 +1,4 @@
 /cmd/celestia-server
 .env
 nitro-das-celestia
+contracts/dependencies

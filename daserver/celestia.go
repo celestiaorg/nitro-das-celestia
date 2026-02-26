@@ -1006,7 +1006,7 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 		return nil, fmt.Errorf("offset out of bounds: offset %d > payload length %d", offset, payloadSize)
 	}
 
-	shareRel := offset / 512
+	shareRel := payloadOffsetToShareRel(offset)
 	firstShareIndex := certificate.Start + shareRel
 	shareCount := uint64(1)
 
@@ -1018,8 +1018,11 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 		} else {
 			chunkLen = uint8(remaining)
 		}
-		intra := offset % 512
-		if intra+uint64(chunkLen) > 512 {
+
+		sharePayloadStart := payloadStartForShareRel(shareRel)
+		sharePayloadCap := payloadCapacityForShareRel(shareRel)
+		intra := offset - sharePayloadStart
+		if intra+uint64(chunkLen) > sharePayloadCap {
 			shareCount = 2
 		}
 	}
@@ -1076,6 +1079,27 @@ func buildReadPreimageProofV1(
 	pos++
 	copy(proof[pos:], sharesProofData)
 	return proof
+}
+
+func payloadOffsetToShareRel(offset uint64) uint64 {
+	if offset < 478 {
+		return 0
+	}
+	return 1 + (offset-478)/482
+}
+
+func payloadStartForShareRel(shareRel uint64) uint64 {
+	if shareRel == 0 {
+		return 0
+	}
+	return 478 + (shareRel-1)*482
+}
+
+func payloadCapacityForShareRel(shareRel uint64) uint64 {
+	if shareRel == 0 {
+		return 478
+	}
+	return 482
 }
 
 func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {

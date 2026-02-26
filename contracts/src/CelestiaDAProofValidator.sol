@@ -105,7 +105,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         uint64 certHeight = uint64(bytes8(certificate[4:12]));
         bytes32 certDataRoot = bytes32(certificate[60:92]);
 
-        uint256 shareRel = proofOffset / CELESTIA_SHARE_SIZE;
+        uint256 shareRel = _payloadOffsetToShareRel(proofOffset);
         uint256 expectedFirstShareIndex = certStart + shareRel;
         require(firstShareIndexInBlob == expectedFirstShareIndex, "Invalid firstShareIndexInBlob");
         require(firstShareIndexInBlob >= certStart, "Share index before cert range");
@@ -144,54 +144,48 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             require(sharesProof.data[i].length == CELESTIA_SHARE_SIZE, "Invalid share length");
         }
 
+        uint256 firstRel = firstShareIndexInBlob - certStart;
         bytes memory share = sharesProof.data[0];
-        require(share.length >= CELESTIA_PAYLOAD_START, "Invalid share header");
+        uint256 firstSharePayloadOffset = _payloadDataStartInShare(firstRel);
+        require(share.length >= firstSharePayloadOffset, "Invalid share header");
 
-        uint256 sequenceLen = (uint256(uint8(share[30])) << 24) |
-            (uint256(uint8(share[31])) << 16) |
-            (uint256(uint8(share[32])) << 8) |
-            uint256(uint8(share[33]));
-        require(payloadSize == sequenceLen, "Payload size mismatch");
+        if (firstRel == 0) {
+            uint256 sequenceLen = (uint256(uint8(share[30])) << 24) |
+                (uint256(uint8(share[31])) << 16) |
+                (uint256(uint8(share[32])) << 8) |
+                uint256(uint8(share[33]));
+            require(payloadSize == sequenceLen, "Payload size mismatch");
+        }
 
         if (chunkLen == 0) {
             return new bytes(0);
         }
 
-        require(offset + chunkLen <= sequenceLen, "Chunk outside payload bounds");
+        require(offset + chunkLen <= payloadSize, "Chunk outside payload bounds");
+
+        uint256 sharePayloadStart = _payloadStartForShareRel(firstRel);
+        uint256 sharePayloadCap = _payloadCapacityForShareRel(firstRel);
+        require(offset >= sharePayloadStart, "Offset before proven share payload");
+        uint256 localOffset = offset - sharePayloadStart;
+        require(localOffset < sharePayloadCap, "Offset outside proven share payload");
 
         bytes memory out = new bytes(chunkLen);
-        if (offset < CELESTIA_FIRST_SHARE_PAYLOAD_CAP) {
-            uint256 firstAvailable = CELESTIA_FIRST_SHARE_PAYLOAD_CAP - offset;
-            uint256 firstTake = chunkLen < firstAvailable ? chunkLen : firstAvailable;
-            uint256 payloadOffsetInShare = CELESTIA_PAYLOAD_START + offset;
-            for (uint256 i = 0; i < firstTake; i++) {
-                out[i] = share[payloadOffsetInShare + i];
-            }
-            if (firstTake == chunkLen) {
-                return out;
-            }
-            require(shareCount == 2, "Missing continuation share");
-            bytes memory cont = sharesProof.data[1];
-            require(cont.length >= CELESTIA_CONT_SHARE_PAYLOAD_START, "Invalid continuation share");
-            uint256 rem = chunkLen - firstTake;
-            for (uint256 i = 0; i < rem; i++) {
-                out[firstTake + i] = cont[CELESTIA_CONT_SHARE_PAYLOAD_START + i];
-            }
+        uint256 firstAvailable = sharePayloadCap - localOffset;
+        uint256 firstTake = chunkLen < firstAvailable ? chunkLen : firstAvailable;
+        uint256 payloadOffsetInShare = firstSharePayloadOffset + localOffset;
+        for (uint256 i = 0; i < firstTake; i++) {
+            out[i] = share[payloadOffsetInShare + i];
+        }
+        if (firstTake == chunkLen) {
             return out;
         }
 
-        // Offset starts in continuation payload region. Current proof generator provides 2 shares for this case.
         require(shareCount == 2, "Missing continuation share");
-        uint256 contOffset = offset - CELESTIA_FIRST_SHARE_PAYLOAD_CAP;
-        require(
-            contOffset + chunkLen <= CELESTIA_CONT_SHARE_PAYLOAD_CAP,
-            "Chunk crosses unsupported continuation boundary"
-        );
-        bytes memory contShare = sharesProof.data[1];
-        require(contShare.length >= CELESTIA_CONT_SHARE_PAYLOAD_START, "Invalid continuation share");
-        uint256 contStart = CELESTIA_CONT_SHARE_PAYLOAD_START + contOffset;
-        for (uint256 i = 0; i < chunkLen; i++) {
-            out[i] = contShare[contStart + i];
+        bytes memory cont = sharesProof.data[1];
+        require(cont.length >= CELESTIA_CONT_SHARE_PAYLOAD_START, "Invalid continuation share");
+        uint256 rem = chunkLen - firstTake;
+        for (uint256 i = 0; i < rem; i++) {
+            out[firstTake + i] = cont[CELESTIA_CONT_SHARE_PAYLOAD_START + i];
         }
         return out;
     }
@@ -256,5 +250,33 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         require(uint64(bytes8(cert[20:28])) != 0, "Zero sharesLength in certificate");
         require(bytes32(cert[28:60]) != bytes32(0), "Zero txCommitment in certificate");
         require(bytes32(cert[60:92]) != bytes32(0), "Zero dataRoot in certificate");
+    }
+
+    function _payloadOffsetToShareRel(uint256 payloadOffset) internal pure returns (uint256) {
+        if (payloadOffset < CELESTIA_FIRST_SHARE_PAYLOAD_CAP) {
+            return 0;
+        }
+        return 1 + ((payloadOffset - CELESTIA_FIRST_SHARE_PAYLOAD_CAP) / CELESTIA_CONT_SHARE_PAYLOAD_CAP);
+    }
+
+    function _payloadStartForShareRel(uint256 shareRel) internal pure returns (uint256) {
+        if (shareRel == 0) {
+            return 0;
+        }
+        return CELESTIA_FIRST_SHARE_PAYLOAD_CAP + (shareRel - 1) * CELESTIA_CONT_SHARE_PAYLOAD_CAP;
+    }
+
+    function _payloadCapacityForShareRel(uint256 shareRel) internal pure returns (uint256) {
+        if (shareRel == 0) {
+            return CELESTIA_FIRST_SHARE_PAYLOAD_CAP;
+        }
+        return CELESTIA_CONT_SHARE_PAYLOAD_CAP;
+    }
+
+    function _payloadDataStartInShare(uint256 shareRel) internal pure returns (uint256) {
+        if (shareRel == 0) {
+            return CELESTIA_PAYLOAD_START;
+        }
+        return CELESTIA_CONT_SHARE_PAYLOAD_START;
     }
 }

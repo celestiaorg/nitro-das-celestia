@@ -90,7 +90,18 @@ contract CelestiaDAProofValidatorTest is Test {
     }
 
     function test_validateReadPreimage_crossShareChunk() public {
-        uint64 offset = 470;
+        uint64 offset = 448;
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
+        bytes memory out = validator.validateReadPreimage(keccak256(validCert), offset, proof);
+
+        assertEq(out.length, 32);
+        for (uint256 i = 0; i < 32; i++) {
+            assertEq(out[i], payload[offset + i]);
+        }
+    }
+
+    function test_validateReadPreimage_continuationShareChunk() public {
+        uint64 offset = 480;
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         bytes memory out = validator.validateReadPreimage(keccak256(validCert), offset, proof);
 
@@ -145,14 +156,17 @@ contract CelestiaDAProofValidatorTest is Test {
             uint64 rem = payloadSize - offset;
             chunkLen = uint8(rem > 32 ? 32 : rem);
         }
-        uint64 firstSharePayloadCap = 512 - 34;
-        bool cross = offset < firstSharePayloadCap && offset + chunkLen > firstSharePayloadCap;
+        uint64 shareRel = _payloadOffsetToShareRel(offset);
+        uint64 sharePayloadStart = _payloadStartForShareRel(shareRel);
+        uint64 sharePayloadCap = _payloadCapacityForShareRel(shareRel);
+        uint64 localOffset = offset - sharePayloadStart;
+        bool cross = localOffset + chunkLen > sharePayloadCap;
         uint8 shareCount = cross ? 2 : 1;
-        uint64 firstShareIndex = certStart + (offset / 512);
+        uint64 firstShareIndex = certStart + shareRel;
         if (badIndex) firstShareIndex++;
 
         bytes[] memory data = new bytes[](shareCount);
-        data[0] = share0;
+        data[0] = firstShareIndex == certStart ? share0 : share1;
         if (shareCount == 2) data[1] = share1;
         if (tamperProof) data[0][40] = bytes1(uint8(data[0][40]) ^ 0x01);
 
@@ -268,5 +282,26 @@ contract CelestiaDAProofValidatorTest is Test {
         for (uint256 i = firstTake; i < pl.length; i++) {
             s1[30 + (i - firstTake)] = pl[i];
         }
+    }
+
+    function _payloadOffsetToShareRel(uint64 payloadOffset) internal pure returns (uint64) {
+        if (payloadOffset < 478) {
+            return 0;
+        }
+        return 1 + ((payloadOffset - 478) / 482);
+    }
+
+    function _payloadStartForShareRel(uint64 shareRel) internal pure returns (uint64) {
+        if (shareRel == 0) {
+            return 0;
+        }
+        return 478 + ((shareRel - 1) * 482);
+    }
+
+    function _payloadCapacityForShareRel(uint64 shareRel) internal pure returns (uint64) {
+        if (shareRel == 0) {
+            return 478;
+        }
+        return 482;
     }
 }

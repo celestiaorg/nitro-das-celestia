@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
@@ -113,4 +114,95 @@ func TestBuildReadPreimageProofV1_Layout(t *testing.T) {
 	require.Equal(t, shareCount, proof[pos])
 	pos++
 	require.Equal(t, trailer, proof[pos:])
+}
+
+func TestPayloadOffsetShareMapping(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		offset        uint64
+		wantShareRel  uint64
+		wantShareBase uint64
+		wantCap       uint64
+	}{
+		{offset: 0, wantShareRel: 0, wantShareBase: 0, wantCap: 478},
+		{offset: 32, wantShareRel: 0, wantShareBase: 0, wantCap: 478},
+		{offset: 448, wantShareRel: 0, wantShareBase: 0, wantCap: 478},
+		{offset: 477, wantShareRel: 0, wantShareBase: 0, wantCap: 478},
+		{offset: 478, wantShareRel: 1, wantShareBase: 478, wantCap: 482},
+		{offset: 480, wantShareRel: 1, wantShareBase: 478, wantCap: 482},
+		{offset: 512, wantShareRel: 1, wantShareBase: 478, wantCap: 482},
+		{offset: 959, wantShareRel: 1, wantShareBase: 478, wantCap: 482},
+		{offset: 960, wantShareRel: 2, wantShareBase: 960, wantCap: 482},
+		{offset: 992, wantShareRel: 2, wantShareBase: 960, wantCap: 482},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(
+			fmt.Sprintf("offset_%d", tc.offset),
+			func(t *testing.T) {
+				rel := payloadOffsetToShareRel(tc.offset)
+				require.Equal(t, tc.wantShareRel, rel)
+				require.Equal(t, tc.wantShareBase, payloadStartForShareRel(rel))
+				require.Equal(t, tc.wantCap, payloadCapacityForShareRel(rel))
+			},
+		)
+	}
+}
+
+func TestReadChunkShareSelectionMatrix(t *testing.T) {
+	t.Parallel()
+
+	chunkLenFor := func(offset, payloadSize uint64) uint64 {
+		if offset >= payloadSize {
+			return 0
+		}
+		rem := payloadSize - offset
+		if rem > 32 {
+			return 32
+		}
+		return rem
+	}
+	shareCountFor := func(offset, payloadSize uint64) uint64 {
+		chunkLen := chunkLenFor(offset, payloadSize)
+		if chunkLen == 0 {
+			return 1
+		}
+		rel := payloadOffsetToShareRel(offset)
+		base := payloadStartForShareRel(rel)
+		cap := payloadCapacityForShareRel(rel)
+		intra := offset - base
+		if intra+chunkLen > cap {
+			return 2
+		}
+		return 1
+	}
+
+	cases := []struct {
+		name           string
+		payloadSize    uint64
+		offset         uint64
+		wantShareRel   uint64
+		wantShareCount uint64
+		wantChunkLen   uint64
+	}{
+		{name: "size_478_off_448", payloadSize: 478, offset: 448, wantShareRel: 0, wantShareCount: 1, wantChunkLen: 30},
+		{name: "size_479_off_448", payloadSize: 479, offset: 448, wantShareRel: 0, wantShareCount: 2, wantChunkLen: 31},
+		{name: "size_480_off_448", payloadSize: 480, offset: 448, wantShareRel: 0, wantShareCount: 2, wantChunkLen: 32},
+		{name: "size_511_off_480", payloadSize: 511, offset: 480, wantShareRel: 1, wantShareCount: 1, wantChunkLen: 31},
+		{name: "size_512_off_480", payloadSize: 512, offset: 480, wantShareRel: 1, wantShareCount: 1, wantChunkLen: 32},
+		{name: "size_513_off_480", payloadSize: 513, offset: 480, wantShareRel: 1, wantShareCount: 1, wantChunkLen: 32},
+		{name: "size_560_off_544", payloadSize: 560, offset: 544, wantShareRel: 1, wantShareCount: 1, wantChunkLen: 16},
+		{name: "size_961_off_960", payloadSize: 961, offset: 960, wantShareRel: 2, wantShareCount: 1, wantChunkLen: 1},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.wantShareRel, payloadOffsetToShareRel(tc.offset))
+			require.Equal(t, tc.wantChunkLen, chunkLenFor(tc.offset, tc.payloadSize))
+			require.Equal(t, tc.wantShareCount, shareCountFor(tc.offset, tc.payloadSize))
+		})
+	}
 }

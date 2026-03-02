@@ -151,6 +151,9 @@ const (
 	celestiaContSharePayloadStart  uint64 = celestiaNamespaceSize + celestiaShareInfoBytes
 	celestiaFirstSharePayloadCap   uint64 = celestiaShareSize - celestiaFirstSharePayloadStart
 	celestiaContSharePayloadCap    uint64 = celestiaShareSize - celestiaContSharePayloadStart
+
+	// Max chunk size for Nitro preimage reads (matches Avalanche/go-ethereum constants)
+	maxPreimageChunkSize uint8 = 32
 )
 
 func hasBits(checking byte, bits byte) bool {
@@ -428,7 +431,11 @@ func (c *CelestiaDA) StartCacheCleanup(cleanupInterval time.Duration) {
 
 		for range ticker.C {
 			// Clear the entire cache periodically
-			c.messageCache = sync.Map{}
+			// Range with delete is thread-safe
+			c.messageCache.Range(func(key, value interface{}) bool {
+				c.messageCache.Delete(key)
+				return true
+			})
 		}
 	}()
 }
@@ -588,6 +595,50 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	return serializedCert, nil
 }
 
+func (c *CelestiaDA) messageCacheStore(key string, value []byte) {
+	c.messageCache.Store(key, value)
+}
+
+// retryWithBackoff executes an operation with exponential backoff and jitter.
+// It respects context cancellation and the configured retry parameters.
+func (c *CelestiaDA) retryWithBackoff(ctx context.Context, operation func() error) error {
+	backoff := c.Cfg.RetryConfig.InitialBackoff
+	for attempt := 0; attempt < c.Cfg.RetryConfig.MaxRetries; attempt++ {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+
+		// Check if context is cancelled
+		if ctx.Err() != nil {
+			return fmt.Errorf("context cancelled: %w", ctx.Err())
+		}
+
+		// Last attempt, don't wait
+		if attempt == c.Cfg.RetryConfig.MaxRetries-1 {
+			return fmt.Errorf("max retries exceeded: %w", err)
+		}
+
+		log.Warn("operation failed, retrying...", "attempt", attempt+1, "backoff", backoff, "err", err)
+
+		// Wait with backoff
+		select {
+		case <-time.After(backoff):
+			// Exponential backoff with jitter
+			backoff = time.Duration(float64(backoff) * c.Cfg.RetryConfig.BackoffFactor)
+			if backoff > c.Cfg.RetryConfig.MaxBackoff {
+				backoff = c.Cfg.RetryConfig.MaxBackoff
+			}
+			// Add jitter (±20%)
+			jitter := time.Duration(rand.Float64()*0.4*float64(backoff)) - time.Duration(0.2*float64(backoff))
+			backoff += jitter
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled during backoff: %w", ctx.Err())
+		}
+	}
+	return fmt.Errorf("unexpected retry loop exit")
+}
+
 func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV1) (*types.ReadResult, error) {
 
 	log.Info("reading blob pointer",
@@ -602,48 +653,9 @@ func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	// Helper function for retrying with exponential backoff
-	retryWithBackoff := func(operation func() error) error {
-		backoff := c.Cfg.RetryConfig.InitialBackoff
-		for attempt := 0; attempt < c.Cfg.RetryConfig.MaxRetries; attempt++ {
-			err := operation()
-			if err == nil {
-				return nil
-			}
-
-			// Check if context is cancelled
-			if ctx.Err() != nil {
-				return fmt.Errorf("context cancelled: %w", ctx.Err())
-			}
-
-			// Last attempt, don't wait
-			if attempt == c.Cfg.RetryConfig.MaxRetries-1 {
-				return fmt.Errorf("max retries exceeded: %w", err)
-			}
-
-			log.Warn("operation failed, retrying...", "attempt", attempt+1, "backoff", backoff, "err", err)
-
-			// Wait with backoff
-			select {
-			case <-time.After(backoff):
-				// Exponential backoff with jitter
-				backoff = time.Duration(float64(backoff) * c.Cfg.RetryConfig.BackoffFactor)
-				if backoff > c.Cfg.RetryConfig.MaxBackoff {
-					backoff = c.Cfg.RetryConfig.MaxBackoff
-				}
-				// Add jitter (±20%)
-				jitter := time.Duration(rand.Float64()*0.4*float64(backoff)) - time.Duration(0.2*float64(backoff))
-				backoff += jitter
-			case <-ctx.Done():
-				return fmt.Errorf("context cancelled during backoff: %w", ctx.Err())
-			}
-		}
-		return fmt.Errorf("unexpected retry loop exit")
-	}
-
 	// Fetch header with retry
 	var header *header.ExtendedHeader
-	err := retryWithBackoff(func() error {
+	err := c.retryWithBackoff(ctx, func() error {
 		var err error
 		header, err = c.ReadClient.Header.GetByHeight(ctx, certificate.BlockHeight)
 		if err != nil {
@@ -666,13 +678,13 @@ func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV
 	// Fetch blob with retry
 	var blobData []byte
 	var sharesLength int
-	err = retryWithBackoff(func() error {
+	err = c.retryWithBackoff(ctx, func() error {
 		blob, err := c.ReadClient.Blob.Get(ctx, certificate.BlockHeight, *c.Namespace, certificate.TxCommitment[:])
 		if err != nil {
 			return err
 		}
 
-		blob.Index()
+		_ = blob.Index() // Ensure blob is initialized
 		blobData = blob.Data()
 		length, err := blob.Length()
 		if err != nil {
@@ -691,7 +703,7 @@ func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV
 
 	// Fetch EDS with retry
 	var extendedSquare *rsmt2d.ExtendedDataSquare
-	err = retryWithBackoff(func() error {
+	err = c.retryWithBackoff(ctx, func() error {
 		var err error
 		extendedSquare, err = c.ReadClient.Share.GetEDS(ctx, certificate.BlockHeight)
 		if err != nil {
@@ -767,6 +779,7 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		log.Error("Couldn't dial to eth rpc for Blobstream proof", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
 		return nil, err
 	}
+	defer ethRpc.Close()
 
 	blobstream, err := blobstreamx.NewBindings(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
 	if err != nil {
@@ -775,7 +788,7 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	fmt.Printf("Inbox Message: %v\n", msg)
+	log.Info("Fetching blobstream proof", "msgLength", len(msg))
 	buf := bytes.NewBuffer(msg)
 	// msgLength := uint32(len(msg) + 1)
 	blobPointer := types.BlobPointer{}
@@ -795,7 +808,7 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	latestBlockNumber, err := ethRpc.BlockNumber(context.Background())
+	latestBlockNumber, err := ethRpc.BlockNumber(ctx)
 	if err != nil {
 		log.Warn("could not fetch latest L1 block", "err", err)
 		celestiaValidationFailureCounter.Inc(1)
@@ -817,12 +830,7 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	fmt.Printf("Blob Pointer Height: %v\n", blobPointer.BlockHeight)
 	fmt.Printf("Latest Blobstream Height: %v\n", latestCelestiaBlock)
 
-	var backwards bool
-	if blobPointer.BlockHeight < latestCelestiaBlock {
-		backwards = true
-	} else {
-		backwards = false
-	}
+	backwards := blobPointer.BlockHeight < latestCelestiaBlock
 
 	var event *blobstreamx.BindingsDataCommitmentStored
 
@@ -902,12 +910,10 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 
 		celestiaValidationSuccessCounter.Inc(1)
 		celestiaValidationLastSuccesfulActionGauge.Update(time.Now().Unix())
-		ethRpc.Close()
 		return proofData, nil
 	}
 
 	celestiaValidationFailureCounter.Inc(1)
-	ethRpc.Close()
 	return nil, err
 }
 
@@ -984,7 +990,7 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 			case <-time.After(time.Second * time.Duration(c.Cfg.ValidatorConfig.SleepTime)):
 			}
 
-			latestBlockNumber, err := ethRpc.BlockNumber(context.Background())
+			latestBlockNumber, err := ethRpc.BlockNumber(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -1128,8 +1134,8 @@ func expectedChunkLen(offset, payloadSize uint64) uint8 {
 		return 0
 	}
 	remaining := payloadSize - offset
-	if remaining > 32 {
-		return 32
+	if remaining > uint64(maxPreimageChunkSize) {
+		return maxPreimageChunkSize
 	}
 	return uint8(remaining)
 }
@@ -1333,7 +1339,7 @@ func (c *CelestiaDA) generateCelestiaProof(
 		return nil, err
 	}
 
-	latestBlockNumber, err := ethRpc.BlockNumber(context.Background())
+	latestBlockNumber, err := ethRpc.BlockNumber(ctx)
 	if err != nil {
 		log.Warn("could not fetch latest L1 block", "err", err)
 		celestiaValidationFailureCounter.Inc(1)

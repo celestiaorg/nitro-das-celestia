@@ -42,12 +42,9 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     uint256 private constant CELESTIA_SEQUENCE_LEN_BYTES = 4;
     uint256 private constant CELESTIA_PAYLOAD_START =
         CELESTIA_NAMESPACE_SIZE + CELESTIA_SHARE_INFO_BYTES + CELESTIA_SEQUENCE_LEN_BYTES;
-    uint256 private constant CELESTIA_CONT_SHARE_PAYLOAD_START =
-        CELESTIA_NAMESPACE_SIZE + CELESTIA_SHARE_INFO_BYTES;
-    uint256 private constant CELESTIA_FIRST_SHARE_PAYLOAD_CAP =
-        CELESTIA_SHARE_SIZE - CELESTIA_PAYLOAD_START;
-    uint256 private constant CELESTIA_CONT_SHARE_PAYLOAD_CAP =
-        CELESTIA_SHARE_SIZE - CELESTIA_CONT_SHARE_PAYLOAD_START;
+    uint256 private constant CELESTIA_CONT_SHARE_PAYLOAD_START = CELESTIA_NAMESPACE_SIZE + CELESTIA_SHARE_INFO_BYTES;
+    uint256 private constant CELESTIA_FIRST_SHARE_PAYLOAD_CAP = CELESTIA_SHARE_SIZE - CELESTIA_PAYLOAD_START;
+    uint256 private constant CELESTIA_CONT_SHARE_PAYLOAD_CAP = CELESTIA_SHARE_SIZE - CELESTIA_CONT_SHARE_PAYLOAD_START;
 
     address public immutable blobstreamX;
 
@@ -55,11 +52,12 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         blobstreamX = _blobstreamX;
     }
 
-    function validateReadPreimage(
-        bytes32 certHash,
-        uint256 offset,
-        bytes calldata proof
-    ) external view override returns (bytes memory preimageChunk) {
+    function validateReadPreimage(bytes32 certHash, uint256 offset, bytes calldata proof)
+        external
+        view
+        override
+        returns (bytes memory preimageChunk)
+    {
         require(proof.length >= CERT_SIZE_FIELD_LEN, "Proof too short: certSize field missing");
 
         uint256 certSize = uint256(uint64(bytes8(proof[0:CERT_SIZE_FIELD_LEN])));
@@ -104,19 +102,14 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         uint256 expectedFirstShareIndex = certStart + shareRel;
         require(firstShareIndexInBlob == expectedFirstShareIndex, "Invalid firstShareIndexInBlob");
         require(firstShareIndexInBlob >= certStart, "Share index before cert range");
-        require(
-            firstShareIndexInBlob + shareCount <= certStart + certSharesLength,
-            "Share index past cert range"
-        );
+        require(firstShareIndexInBlob + shareCount <= certStart + certSharesLength, "Share index past cert range");
         require(shareCount == 1 || shareCount == 2, "Invalid shareCount");
 
         bytes calldata sharesProofData = custom[pos:];
         require(sharesProofData.length > 0, "Missing shares proof data");
 
-        (address encodedBlobstream, SharesProof memory sharesProof) = abi.decode(
-            sharesProofData,
-            (address, SharesProof)
-        );
+        (address encodedBlobstream, SharesProof memory sharesProof) =
+            abi.decode(sharesProofData, (address, SharesProof));
         encodedBlobstream;
 
         require(
@@ -128,10 +121,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             "Shares proof dataRoot does not match certificate dataRoot"
         );
 
-        (bool valid, ) = DAVerifier.verifySharesToDataRootTupleRoot(
-            IDAOracle(blobstreamX),
-            sharesProof
-        );
+        (bool valid,) = DAVerifier.verifySharesToDataRootTupleRoot(IDAOracle(blobstreamX), sharesProof);
         require(valid, "Invalid Celestia shares inclusion proof");
 
         require(sharesProof.data.length == shareCount, "Shares count mismatch");
@@ -181,9 +171,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         return out;
     }
 
-    function validateCertificate(
-        bytes calldata proof
-    ) external pure override returns (bool isValid) {
+    function validateCertificate(bytes calldata proof) external pure override returns (bool isValid) {
         if (proof.length < CERT_SIZE_FIELD_LEN + CERT_V1_LEN + 1) {
             return false;
         }
@@ -283,9 +271,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     }
 
     function _decodeSequenceLen(bytes memory share0) internal pure returns (uint256) {
-        return (uint256(uint8(share0[30])) << 24) |
-            (uint256(uint8(share0[31])) << 16) |
-            (uint256(uint8(share0[32])) << 8) |
-            uint256(uint8(share0[33]));
+        return (uint256(uint8(share0[30])) << 24) | (uint256(uint8(share0[31])) << 16)
+            | (uint256(uint8(share0[32])) << 8) | uint256(uint8(share0[33]));
     }
 }

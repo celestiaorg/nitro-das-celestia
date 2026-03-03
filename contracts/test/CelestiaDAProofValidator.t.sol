@@ -38,43 +38,23 @@ contract CelestiaDAProofValidatorTest is Test {
         rowRoot0 = leafDigest(ns, share0);
         rowRoot1 = leafDigest(ns, share1);
 
-        bytes memory rowRootBytes0 = abi.encodePacked(
-            rowRoot0.min.toBytes(),
-            rowRoot0.max.toBytes(),
-            rowRoot0.digest
-        );
-        bytes memory rowRootBytes1 = abi.encodePacked(
-            rowRoot1.min.toBytes(),
-            rowRoot1.max.toBytes(),
-            rowRoot1.digest
-        );
+        bytes memory rowRootBytes0 = abi.encodePacked(rowRoot0.min.toBytes(), rowRoot0.max.toBytes(), rowRoot0.digest);
+        bytes memory rowRootBytes1 = abi.encodePacked(rowRoot1.min.toBytes(), rowRoot1.max.toBytes(), rowRoot1.digest);
         certDataRoot = nodeDigest(leafDigest(rowRootBytes0), leafDigest(rowRootBytes1));
 
-        validCert = _buildCert(
-            certHeight,
-            certStart,
-            certSharesLength,
-            keccak256("tx-commitment"),
-            certDataRoot
-        );
+        validCert = _buildCert(certHeight, certStart, certSharesLength, keccak256("tx-commitment"), certDataRoot);
 
         mockBlobstream = new MockBlobstream();
         mockBlobstream.initialize(0);
         validator = new CelestiaDAProofValidator(address(mockBlobstream));
 
         DataRootTuple memory tuple = DataRootTuple({height: certHeight, dataRoot: certDataRoot});
-        BinaryMerkleProof memory tupleProof = BinaryMerkleProof({
-            sideNodes: new bytes32[](0),
-            key: 0,
-            numLeaves: 1
-        });
         bytes32 commitment = leafDigest(abi.encode(tuple));
         mockBlobstream.submitDataCommitment(commitment, 0, certHeight + 1);
     }
 
     function test_validateCertificate_valid_claimed1() public {
-        bytes memory proof =
-            abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x01));
+        bytes memory proof = abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x01));
         assertTrue(validator.validateCertificate(proof));
     }
 
@@ -132,24 +112,15 @@ contract CelestiaDAProofValidatorTest is Test {
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
 
-    function _buildReadProof(
-        uint64 offset,
-        uint64 payloadSize,
-        bool tamperProof,
-        bool badIndex
-    ) internal view returns (bytes memory) {
+    function _buildReadProof(uint64 offset, uint64 payloadSize, bool tamperProof, bool badIndex)
+        internal
+        view
+        returns (bytes memory)
+    {
         DataRootTuple memory tuple = DataRootTuple({height: certHeight, dataRoot: certDataRoot});
 
-        bytes memory rowRootBytes0 = abi.encodePacked(
-            rowRoot0.min.toBytes(),
-            rowRoot0.max.toBytes(),
-            rowRoot0.digest
-        );
-        bytes memory rowRootBytes1 = abi.encodePacked(
-            rowRoot1.min.toBytes(),
-            rowRoot1.max.toBytes(),
-            rowRoot1.digest
-        );
+        bytes memory rowRootBytes0 = abi.encodePacked(rowRoot0.min.toBytes(), rowRoot0.max.toBytes(), rowRoot0.digest);
+        bytes memory rowRootBytes1 = abi.encodePacked(rowRoot1.min.toBytes(), rowRoot1.max.toBytes(), rowRoot1.digest);
 
         uint8 chunkLen = 0;
         if (offset < payloadSize) {
@@ -205,11 +176,7 @@ contract CelestiaDAProofValidatorTest is Test {
             rowProofs[1] = BinaryMerkleProof({sideNodes: sideB, key: 1, numLeaves: 2});
         }
 
-        BinaryMerkleProof memory tupleProof = BinaryMerkleProof({
-            sideNodes: new bytes32[](0),
-            key: 0,
-            numLeaves: 1
-        });
+        BinaryMerkleProof memory tupleProof = BinaryMerkleProof({sideNodes: new bytes32[](0), key: 0, numLeaves: 1});
 
         SharesProof memory sharesProof = SharesProof({
             data: data,
@@ -217,11 +184,7 @@ contract CelestiaDAProofValidatorTest is Test {
             namespace: ns,
             rowRoots: rowRoots,
             rowProofs: rowProofs,
-            attestationProof: AttestationProof({
-                tupleRootNonce: 1,
-                tuple: tuple,
-                proof: tupleProof
-            })
+            attestationProof: AttestationProof({tupleRootNonce: 1, tuple: tuple, proof: tupleProof})
         });
 
         bytes memory custom = abi.encodePacked(
@@ -236,13 +199,11 @@ contract CelestiaDAProofValidatorTest is Test {
         return abi.encodePacked(bytes8(uint64(validCert.length)), validCert, custom);
     }
 
-    function _buildCert(
-        uint64 blockHeight,
-        uint64 start,
-        uint64 sharesLength,
-        bytes32 txc,
-        bytes32 dataRoot
-    ) internal pure returns (bytes memory) {
+    function _buildCert(uint64 blockHeight, uint64 start, uint64 sharesLength, bytes32 txc, bytes32 dataRoot)
+        internal
+        pure
+        returns (bytes memory)
+    {
         return abi.encodePacked(
             bytes1(0x01),
             bytes1(0x63),

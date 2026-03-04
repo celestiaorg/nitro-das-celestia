@@ -273,14 +273,7 @@ func (serv *DaClientServer) Store(
 	message hexutil.Bytes,
 	timeout hexutil.Uint64,
 ) (*server_api.StoreResult, error) {
-	storeCtx := context.Background()
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		storeCtx, cancel = context.WithTimeout(storeCtx, time.Duration(timeout)*time.Millisecond)
-		defer cancel()
-	}
-
-	cert, err := serv.writer.Store(message, uint64(timeout)).Await(storeCtx)
+	cert, err := serv.writer.Store(message, uint64(timeout)).Await(context.Background())
 	if err != nil {
 		// check if theres an error to log out on the da server
 		log.Error("daprovider_store: error storing data on celestia", "err", err)

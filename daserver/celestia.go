@@ -1246,6 +1246,10 @@ func (c *CelestiaDA) validateCertificate(ctx context.Context, certificate *cert.
 		return false, nil
 	}
 
+	// Prevent uint64 wraparound when computing:
+	//   endIndexOds := certificate.Start + certificate.SharesLength - 1
+	// If Start is too close to MaxUint64, adding (SharesLength-1) would overflow
+	// and wrap to a small value, corrupting bounds checks.
 	if certificate.Start > math.MaxUint64-(certificate.SharesLength-1) {
 		return false, nil
 	}

@@ -48,13 +48,7 @@ func (c *writerForCelestia) Store(
 	timeout uint64,
 ) containers.PromiseInterface[[]byte] {
 	return containers.DoPromise(context.Background(), func(ctx context.Context) ([]byte, error) {
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
-			defer cancel()
-		}
-
-		cert, err := c.celestiaWriter.Store(ctx, message)
+		cert, err := c.celestiaWriter.Store(context.Background(), message)
 		if err != nil {
 			log.Error("Returning error from Celestia writer", "err", err)
 			return nil, err

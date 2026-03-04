@@ -1,7 +1,6 @@
 name: e2e-nitro-celestia
 
 on:
-  on:
   push:
     branches:
       - main
@@ -34,7 +33,7 @@ on:
         description: "Ref for OffchainLabs testnode (release branch recommended)"
         required: false
         default: release
-        das_image:
+      das_image:
           description: "Celestia DA server image"
           required: false
           default: ghcr.io/celestiaorg/nitro-das-celestia:latest

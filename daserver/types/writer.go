@@ -14,8 +14,10 @@ type OldWriter interface {
 		ctx context.Context,
 		message []byte,
 		timeout uint64,
-		disableFallbackStoreDataOnChain bool,
 	) ([]byte, error)
+
+	// GetMaxMessageSize returns the maximum message size the writer can accept.
+	GetMaxMessageSize(ctx context.Context) (int, error)
 }
 
 // New Writer interface from v3.8.0
@@ -26,6 +28,9 @@ type Writer interface {
 		message []byte,
 		timeout uint64,
 	) containers.PromiseInterface[[]byte]
+
+	// GetMaxMessageSize returns the maximum message size the writer can accept.
+	GetMaxMessageSize() containers.PromiseInterface[int]
 }
 
 func NewWriterForCelestia(celestiaWriter CelestiaWriter) *writerForCelestia {
@@ -48,6 +53,12 @@ func (c *writerForCelestia) Store(
 			return nil, err
 		}
 		return cert, nil
+	})
+}
+
+func (c *writerForCelestia) GetMaxMessageSize() containers.PromiseInterface[int] {
+	return containers.DoPromise(context.Background(), func(ctx context.Context) (int, error) {
+		return c.celestiaWriter.MaxMessageSize(ctx)
 	})
 }
 

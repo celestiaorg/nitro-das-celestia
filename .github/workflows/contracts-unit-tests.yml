@@ -1,0 +1,90 @@
+name: contracts-unit-tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: contracts-unit-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Foundry contract unit tests
+  # Runs forge test against CelestiaDAProofValidator and MockBlobstream.
+  # No live node or Blobstream contract needed.
+  # ---------------------------------------------------------------------------
+  foundry:
+    name: Foundry contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install soldeer dependencies
+        working-directory: contracts
+        run: forge soldeer install
+
+      - name: Build contracts
+        working-directory: contracts
+        run: forge build --sizes
+
+      - name: Run Foundry tests
+        working-directory: contracts
+        run: forge test --summary -vvv
+
+      - name: Check gas snapshots (informational)
+        working-directory: contracts
+        run: forge snapshot --check --tolerance 5 || true
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Go unit tests (no live Celestia node required)
+  # Runs only tests that do not require NAMESPACE / ETH_RPC / BLOBSTREAM_ADDR.
+  # ---------------------------------------------------------------------------
+  go-unit:
+    name: Go unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Run cert package tests
+        run: go test ./daserver/cert/... -v -count=1
+
+      - name: Run validator byte-audit test (no live node needed)
+        run: go test ./daserver/... -run TestValidatorProofLayout_ByteAudit -v -count=1
+
+      - name: Build root package
+        run: go build ./...

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	awskeyring "github.com/celestiaorg/aws-kms-keyring"
-	"github.com/celestiaorg/celestia-app/v6/pkg/appconsts"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	"github.com/celestiaorg/celestia-node/blob"
@@ -115,10 +114,10 @@ var DefaultCelestiaRetryConfig = RetryBackoffConfig{
 }
 
 type ValidatorConfig struct {
-	EthClient           string `koanf:"eth-rpc" reload:"hot"`
-	BlobstreamAddr      string `koanf:"blobstream" reload:"hot"`
-	ProofValidatorAddr  string `koanf:"proof-validator" reload:"hot"`
-	SleepTime           int    `koanf:"sleep-time" reload:"hot"`
+	EthClient          string `koanf:"eth-rpc" reload:"hot"`
+	BlobstreamAddr     string `koanf:"blobstream" reload:"hot"`
+	ProofValidatorAddr string `koanf:"proof-validator" reload:"hot"`
+	SleepTime          int    `koanf:"sleep-time" reload:"hot"`
 }
 
 var (
@@ -156,6 +155,9 @@ const (
 
 	// Max chunk size for Nitro preimage reads
 	maxPreimageChunkSize uint8 = 32
+
+	// Same as celestia-app appconsts.DefaultMaxBytes
+	celestiaDefaultMaxBytes = 32 * 1024 * 1024
 
 	celestiaDAProofValidatorABIJSON = `[
 		{"inputs":[{"internalType":"address","name":"_blobstreamX","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},
@@ -196,13 +198,13 @@ type CelestiaDA struct {
 
 func (c *CelestiaDA) MaxMessageSize(ctx context.Context) (int, error) {
 	// Prefer the deployed CelestiaDAProofValidator as the source of truth for
-	// max message size (owner-updatable on-chain). Fall back to appconsts default
+	// max message size (owner-updatable on-chain). Fall back to local default
 	// if configuration or RPC reads are unavailable.
 	if c.Cfg != nil && c.Cfg.ValidatorConfig.EthClient != "" && c.Cfg.ValidatorConfig.ProofValidatorAddr != "" {
 		ethRpc, err := ethclient.Dial(c.Cfg.ValidatorConfig.EthClient)
 		if err != nil {
-			log.Warn("Couldn't dial to eth rpc for proof validator max message size, falling back to appconsts", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
-			return int(appconsts.DefaultMaxBytes), nil
+			log.Warn("Couldn't dial to eth rpc for proof validator max message size, falling back to local default", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
+			return celestiaDefaultMaxBytes, nil
 		}
 		defer ethRpc.Close()
 
@@ -212,30 +214,30 @@ func (c *CelestiaDA) MaxMessageSize(ctx context.Context) (int, error) {
 		var out []interface{}
 		err = bound.Call(&bind.CallOpts{Context: ctx}, &out, "getMaxMessageSize")
 		if err != nil {
-			log.Warn("Calling getMaxMessageSize on proof validator failed, falling back to appconsts", "addr", proofValidatorAddr, "err", err)
-			return int(appconsts.DefaultMaxBytes), nil
+			log.Warn("Calling getMaxMessageSize on proof validator failed, falling back to local default", "addr", proofValidatorAddr, "err", err)
+			return celestiaDefaultMaxBytes, nil
 		}
 		if len(out) != 1 {
-			log.Warn("Unexpected return shape from getMaxMessageSize, falling back to appconsts", "addr", proofValidatorAddr)
-			return int(appconsts.DefaultMaxBytes), nil
+			log.Warn("Unexpected return shape from getMaxMessageSize, falling back to local default", "addr", proofValidatorAddr)
+			return celestiaDefaultMaxBytes, nil
 		}
 
 		maxSizeBig, ok := out[0].(*big.Int)
 		if !ok || maxSizeBig == nil || maxSizeBig.Sign() <= 0 || !maxSizeBig.IsInt64() {
-			log.Warn("Invalid getMaxMessageSize return value, falling back to appconsts", "addr", proofValidatorAddr, "val", out[0])
-			return int(appconsts.DefaultMaxBytes), nil
+			log.Warn("Invalid getMaxMessageSize return value, falling back to local default", "addr", proofValidatorAddr, "val", out[0])
+			return celestiaDefaultMaxBytes, nil
 		}
 
 		maxSize := maxSizeBig.Int64()
 		if maxSize > int64(^uint(0)>>1) {
-			log.Warn("getMaxMessageSize too large for platform int, falling back to appconsts", "addr", proofValidatorAddr, "maxSize", maxSize)
-			return int(appconsts.DefaultMaxBytes), nil
+			log.Warn("getMaxMessageSize too large for platform int, falling back to local default", "addr", proofValidatorAddr, "maxSize", maxSize)
+			return celestiaDefaultMaxBytes, nil
 		}
 
 		return int(maxSize), nil
 	}
 
-	return int(appconsts.DefaultMaxBytes), nil
+	return celestiaDefaultMaxBytes, nil
 }
 
 func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {

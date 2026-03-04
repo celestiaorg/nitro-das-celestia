@@ -9,7 +9,6 @@ require (
 	github.com/celestiaorg/go-square/v3 v3.0.2
 	github.com/cometbft/cometbft v0.38.17
 	github.com/ethereum/go-ethereum v1.16.8
-	github.com/joho/godotenv v1.5.1
 	github.com/offchainlabs/nitro v0.0.0-20260120142718-03e22df79fa1
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1

@@ -1246,7 +1246,7 @@ func (c *CelestiaDA) validateCertificate(ctx context.Context, certificate *cert.
 		return false, nil
 	}
 
-	if certificate.Start+certificate.SharesLength < 1 {
+	if certificate.Start > math.MaxUint64-(certificate.SharesLength-1) {
 		return false, nil
 	}
 

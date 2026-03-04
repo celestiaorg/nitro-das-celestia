@@ -31,6 +31,7 @@ import (
 	"github.com/celestiaorg/rsmt2d"
 	"github.com/cometbft/cometbft/crypto/merkle"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -114,9 +115,10 @@ var DefaultCelestiaRetryConfig = RetryBackoffConfig{
 }
 
 type ValidatorConfig struct {
-	EthClient      string `koanf:"eth-rpc" reload:"hot"`
-	BlobstreamAddr string `koanf:"blobstream" reload:"hot"`
-	SleepTime      int    `koanf:"sleep-time" reload:"hot"`
+	EthClient           string `koanf:"eth-rpc" reload:"hot"`
+	BlobstreamAddr      string `koanf:"blobstream" reload:"hot"`
+	ProofValidatorAddr  string `koanf:"proof-validator" reload:"hot"`
+	SleepTime           int    `koanf:"sleep-time" reload:"hot"`
 }
 
 var (
@@ -152,8 +154,13 @@ const (
 	celestiaFirstSharePayloadCap   uint64 = celestiaShareSize - celestiaFirstSharePayloadStart
 	celestiaContSharePayloadCap    uint64 = celestiaShareSize - celestiaContSharePayloadStart
 
-	// Max chunk size for Nitro preimage reads (matches Avalanche/go-ethereum constants)
+	// Max chunk size for Nitro preimage reads
 	maxPreimageChunkSize uint8 = 32
+
+	celestiaDAProofValidatorABIJSON = `[
+		{"inputs":[{"internalType":"address","name":"_blobstreamX","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},
+		{"inputs":[],"name":"getMaxMessageSize","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+	]`
 )
 
 func hasBits(checking byte, bits byte) bool {
@@ -168,6 +175,14 @@ func IsCustomDAHeaderByte(header byte) bool {
 	return hasBits(header, cert.CustomDAHeaderFlag)
 }
 
+func mustCelestiaDAProofValidatorABI() abi.ABI {
+	parsed, err := abi.JSON(strings.NewReader(celestiaDAProofValidatorABIJSON))
+	if err != nil {
+		panic(fmt.Sprintf("invalid CelestiaDAProofValidator ABI: %v", err))
+	}
+	return parsed
+}
+
 type CelestiaDA struct {
 	Cfg        *DAConfig
 	Client     *node.Client
@@ -180,25 +195,46 @@ type CelestiaDA struct {
 }
 
 func (c *CelestiaDA) MaxMessageSize(ctx context.Context) (int, error) {
-	// Prefer querying the live node via DA.MaxBlobSize so the value stays in
-	// sync with whatever the connected node / app version reports.
-	// c.Client is only set when WithWriter=true and ExperimentalTxClient=false;
-	// fall back to the compile-time constant for read-only or gRPC writer mode.
-	//
-	// TODO(future): This returns a single-blob limit. Consider making it
-	// dynamically computed to support:
-	//   - Multi-blob batches (batches larger than one blob, split across
-	//     multiple Celestia blobs and reassembled on read)
-	//   - FIBRE or other custom backends with different per-message limits
-	// Until then, the single-blob size reported by the connected node is the
-	// correct upper bound for a sequencer batch.
-	if c.Client != nil {
-		maxSize, err := c.Client.DA.MaxBlobSize(ctx)
-		if err == nil {
-			return int(maxSize), nil
+	// Prefer the deployed CelestiaDAProofValidator as the source of truth for
+	// max message size (owner-updatable on-chain). Fall back to appconsts default
+	// if configuration or RPC reads are unavailable.
+	if c.Cfg != nil && c.Cfg.ValidatorConfig.EthClient != "" && c.Cfg.ValidatorConfig.ProofValidatorAddr != "" {
+		ethRpc, err := ethclient.Dial(c.Cfg.ValidatorConfig.EthClient)
+		if err != nil {
+			log.Warn("Couldn't dial to eth rpc for proof validator max message size, falling back to appconsts", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
+			return int(appconsts.DefaultMaxBytes), nil
 		}
-		log.Warn("DA.MaxBlobSize RPC failed, falling back to appconsts", "err", err)
+		defer ethRpc.Close()
+
+		proofValidatorAddr := common.HexToAddress(c.Cfg.ValidatorConfig.ProofValidatorAddr)
+		bound := bind.NewBoundContract(proofValidatorAddr, mustCelestiaDAProofValidatorABI(), ethRpc, nil, nil)
+
+		var out []interface{}
+		err = bound.Call(&bind.CallOpts{Context: ctx}, &out, "getMaxMessageSize")
+		if err != nil {
+			log.Warn("Calling getMaxMessageSize on proof validator failed, falling back to appconsts", "addr", proofValidatorAddr, "err", err)
+			return int(appconsts.DefaultMaxBytes), nil
+		}
+		if len(out) != 1 {
+			log.Warn("Unexpected return shape from getMaxMessageSize, falling back to appconsts", "addr", proofValidatorAddr)
+			return int(appconsts.DefaultMaxBytes), nil
+		}
+
+		maxSizeBig, ok := out[0].(*big.Int)
+		if !ok || maxSizeBig == nil || maxSizeBig.Sign() <= 0 || !maxSizeBig.IsInt64() {
+			log.Warn("Invalid getMaxMessageSize return value, falling back to appconsts", "addr", proofValidatorAddr, "val", out[0])
+			return int(appconsts.DefaultMaxBytes), nil
+		}
+
+		maxSize := maxSizeBig.Int64()
+		if maxSize > int64(^uint(0)>>1) {
+			log.Warn("getMaxMessageSize too large for platform int, falling back to appconsts", "addr", proofValidatorAddr, "maxSize", maxSize)
+			return int(appconsts.DefaultMaxBytes), nil
+		}
+
+		return int(maxSize), nil
 	}
+
 	return int(appconsts.DefaultMaxBytes), nil
 }
 
@@ -223,6 +259,7 @@ func CelestiaDAConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Bool(prefix+".noop-writer", false, "Noop writer (disable posting to celestia)")
 	f.String(prefix+".validator-config"+".eth-rpc", "", "Parent chain connection, only used for validation")
 	f.String(prefix+".validator-config"+".blobstream", "", "Blobstream address, only used for validation")
+	f.String(prefix+".validator-config"+".proof-validator", "", "CelestiaDAProofValidator contract address for max message size")
 	f.Int(prefix+".validator-config"+".sleep-time", 3600, "How many seconds to wait before initiating another filtering loop for Blobstream events")
 	f.Duration(prefix+".cache-time", time.Hour/2, "how often to clean the in memory cache")
 	CelestiaRetryConfigAddOptions(prefix+".retry-config", f)

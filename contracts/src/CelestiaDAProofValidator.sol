@@ -36,6 +36,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
 
     uint8 private constant READ_PROOF_VERSION = 0x01;
     uint8 private constant VALIDITY_PROOF_VERSION = 0x01;
+    uint256 private constant DEFAULT_MAX_MESSAGE_SIZE = 32 * 1024 * 1024; // 32 MiB
     uint256 private constant CELESTIA_SHARE_SIZE = 512;
     uint256 private constant CELESTIA_NAMESPACE_SIZE = 29;
     uint256 private constant CELESTIA_SHARE_INFO_BYTES = 1;
@@ -47,9 +48,39 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     uint256 private constant CELESTIA_CONT_SHARE_PAYLOAD_CAP = CELESTIA_SHARE_SIZE - CELESTIA_CONT_SHARE_PAYLOAD_START;
 
     address public immutable blobstreamX;
+    address public owner;
+    uint256 private maxMessageSize;
+
+    event OwnerUpdated(address indexed previousOwner, address indexed newOwner);
+    event MaxMessageSizeUpdated(uint256 previousMaxMessageSize, uint256 newMaxMessageSize);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner");
+        _;
+    }
 
     constructor(address _blobstreamX) {
         blobstreamX = _blobstreamX;
+        owner = msg.sender;
+        maxMessageSize = DEFAULT_MAX_MESSAGE_SIZE;
+    }
+
+    function getMaxMessageSize() external view returns (uint256) {
+        return maxMessageSize;
+    }
+
+    function setMaxMessageSize(uint256 _maxMessageSize) external onlyOwner {
+        require(_maxMessageSize > 0, "Invalid max message size");
+        uint256 previous = maxMessageSize;
+        maxMessageSize = _maxMessageSize;
+        emit MaxMessageSizeUpdated(previous, _maxMessageSize);
+    }
+
+    function setOwner(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Invalid owner");
+        address previous = owner;
+        owner = newOwner;
+        emit OwnerUpdated(previous, newOwner);
     }
 
     function validateReadPreimage(bytes32 certHash, uint256 offset, bytes calldata proof)

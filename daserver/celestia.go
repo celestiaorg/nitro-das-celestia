@@ -367,6 +367,40 @@ func initKeyring(ctx context.Context, cfg *DAConfig) (keyring.Keyring, error) {
 	return kr, err
 }
 
+func parseNamespaceID(namespaceID string) (libshare.Namespace, error) {
+	if namespaceID == "" {
+		return libshare.Namespace{}, errors.New("namespace id cannot be blank")
+	}
+
+	nsBytes, err := hex.DecodeString(namespaceID)
+	if err != nil {
+		return libshare.Namespace{}, err
+	}
+
+	// Handle both full namespace (29 bytes) and short subID (<=10 bytes) formats.
+	if len(nsBytes) == 29 {
+		// Full namespace format: 1 byte version + 28 bytes ID.
+		// For v0 namespaces, the first 18 bytes in the ID must be zero padding
+		// and the last 10 bytes are the namespace subID.
+		if nsBytes[0] != 0 {
+			return libshare.Namespace{}, fmt.Errorf("only v0 namespaces are supported, got version %d", nsBytes[0])
+		}
+		for i := 1; i < 19; i++ {
+			if nsBytes[i] != 0 {
+				return libshare.Namespace{}, fmt.Errorf("invalid v0 namespace: expected zero padding in bytes [1:19], found non-zero at index %d", i)
+			}
+		}
+		return libshare.NewV0Namespace(nsBytes[19:])
+	}
+
+	if len(nsBytes) <= 10 {
+		// Short subID format (direct subID, max 10 bytes).
+		return libshare.NewV0Namespace(nsBytes)
+	}
+
+	return libshare.Namespace{}, fmt.Errorf("invalid namespace_id length: %d bytes (expected 29 for full namespace or <=10 for subID)", len(nsBytes))
+}
+
 func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 	if cfg == nil {
 		return nil, errors.New("celestia cfg cannot be blank")
@@ -376,37 +410,9 @@ func NewCelestiaDA(cfg *DAConfig) (*CelestiaDA, error) {
 		cfg.RetryConfig = DefaultCelestiaRetryConfig
 	}
 
-	if cfg.NamespaceId == "" {
-		return nil, errors.New("namespace id cannot be blank")
-	}
-	nsBytes, err := hex.DecodeString(cfg.NamespaceId)
+	namespace, err := parseNamespaceID(cfg.NamespaceId)
 	if err != nil {
 		return nil, err
-	}
-
-	// Handle both full namespace (29 bytes) and short subID (<=10 bytes) formats
-	var namespace libshare.Namespace
-	if len(nsBytes) == 29 {
-		// Full namespace format: 1 byte version + 28 bytes ID
-		// For v0 namespaces, extract the subID from the last 10 bytes of the ID
-		if nsBytes[0] != 0 {
-			return nil, fmt.Errorf("only v0 namespaces are supported, got version %d", nsBytes[0])
-		}
-		// The subID is the non-zero suffix of the 28-byte ID
-		// For v0, the first 18 bytes of ID should be zeros, leaving 10 bytes for subID
-		subID := nsBytes[19:] // Skip version byte (1) + zero padding (18) = 19 bytes
-		namespace, err = libshare.NewV0Namespace(subID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create namespace from full format: %w", err)
-		}
-	} else if len(nsBytes) <= 10 {
-		// Short subID format (direct subID, max 10 bytes)
-		namespace, err = libshare.NewV0Namespace(nsBytes)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		return nil, fmt.Errorf("invalid namespace_id length: %d bytes (expected 29 for full namespace or <=10 for subID)", len(nsBytes))
 	}
 
 	var readClient *txclient.ReadClient

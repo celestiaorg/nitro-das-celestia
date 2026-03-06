@@ -78,4 +78,4 @@ EXPOSE 1317 9090 26657 1095 8080 26658 9876 6060
 # Use ENTRYPOINT for the binary, CMD for default arguments
 # This allows docker-compose to override the command arguments
 ENTRYPOINT ["/bin/celestia-server"]
-CMD ["--help"]
+CMD ["--config", "/config.toml"]

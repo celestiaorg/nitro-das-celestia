@@ -8,6 +8,7 @@ import (
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/offchainlabs/nitro/arbutil"
 	"github.com/offchainlabs/nitro/daprovider"
@@ -154,6 +155,11 @@ func RecoverPayloadFromCelestiaBatch(
 	}
 
 	if preimageRecorder != nil {
+		certBytes, err := certificate.MarshalBinary()
+		if err != nil {
+			return nil, nil, err
+		}
+		preimageRecorder(crypto.Keccak256Hash(certBytes), result.Message, arbutil.DACertificatePreimageType)
 
 		odsSize := result.SquareSize / 2
 		rowIndex := result.StartRow

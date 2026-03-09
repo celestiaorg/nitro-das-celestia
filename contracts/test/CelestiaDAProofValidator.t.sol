@@ -58,6 +58,18 @@ contract CelestiaDAProofValidatorTest is Test {
         assertTrue(validator.validateCertificate(proof));
     }
 
+    function test_validateCertificate_valid_claimed0_returnsFalse() public {
+        bytes memory proof = abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x00), bytes1(0x01));
+        assertFalse(validator.validateCertificate(proof));
+    }
+
+    function test_validateCertificate_invalidStructure_claimed1_returnsFalse() public {
+        bytes memory badCert = bytes(validCert);
+        badCert[0] = 0x00;
+        bytes memory proof = abi.encodePacked(uint64(badCert.length), badCert, bytes1(0x01), bytes1(0x01));
+        assertFalse(validator.validateCertificate(proof));
+    }
+
     function test_validateReadPreimage_singleShareChunk() public {
         uint64 offset = 0;
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
@@ -103,6 +115,23 @@ contract CelestiaDAProofValidatorTest is Test {
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), true, false);
         vm.expectRevert("Invalid Celestia shares inclusion proof");
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
+    }
+
+    function test_validateReadPreimage_evilDataGoodCert_reverts() public {
+        // Evil payload under the same good certificate should fail share inclusion.
+        uint64 offset = 64;
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), true, false);
+        vm.expectRevert("Invalid Celestia shares inclusion proof");
+        validator.validateReadPreimage(keccak256(validCert), offset, proof);
+    }
+
+    function test_validateReadPreimage_evilDataEvilCert_reverts() public {
+        // Evil cert hash passed while proof still carries good cert bytes.
+        uint64 offset = 64;
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
+        bytes memory evilCert = _buildCert(certHeight, certStart, certSharesLength, keccak256("evil-tx"), certDataRoot);
+        vm.expectRevert("Certificate hash mismatch");
+        validator.validateReadPreimage(keccak256(evilCert), offset, proof);
     }
 
     function test_validateReadPreimage_badIndex_reverts() public {

@@ -326,7 +326,8 @@ var DefaultKeyringPath = func(tp string, network string) (string, error) {
 		return "", err
 	}
 
-	if network == "mainnet" {
+	// Normalize: "celestia" is the canonical mainnet network name
+	if network == "mainnet" || network == "celestia" || network == "" {
 		return fmt.Sprintf("%s/.celestia-%s/keys", home, strings.ToLower(tp)), nil
 	}
 	// only include network name in path for testnets and custom networks

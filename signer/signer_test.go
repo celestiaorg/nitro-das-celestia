@@ -58,8 +58,9 @@ func TestDefaultKeyringPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envHome != "" {
-				os.Setenv("CELESTIA_HOME", tt.envHome)
-				defer os.Unsetenv("CELESTIA_HOME")
+				t.Setenv("CELESTIA_HOME", tt.envHome)
+			} else {
+				t.Setenv("CELESTIA_HOME", "")
 			}
 
 			path, err := defaultKeyringPath(tt.nodeType, tt.network)

@@ -100,22 +100,22 @@ func startMetrics(cfg *config.Config) error {
 
 // parseTimeouts converts config timeout strings to HTTPServerTimeoutConfig
 func parseTimeouts(cfg *config.Config) genericconf.HTTPServerTimeoutConfig {
-	readTimeout, _ := time.ParseDuration(cfg.Server.ReadTimeout)
-	readHeaderTimeout, _ := time.ParseDuration(cfg.Server.ReadHeaderTimeout)
-	writeTimeout, _ := time.ParseDuration(cfg.Server.WriteTimeout)
-	idleTimeout, _ := time.ParseDuration(cfg.Server.IdleTimeout)
+	readTimeout, readErr := time.ParseDuration(cfg.Server.ReadTimeout)
+	readHeaderTimeout, readHeaderErr := time.ParseDuration(cfg.Server.ReadHeaderTimeout)
+	writeTimeout, writeErr := time.ParseDuration(cfg.Server.WriteTimeout)
+	idleTimeout, idleErr := time.ParseDuration(cfg.Server.IdleTimeout)
 
-	// Use defaults if parsing fails
-	if readTimeout == 0 {
+	// Use defaults only if parsing fails (not when "0s" is explicitly set)
+	if readErr != nil {
 		readTimeout = 30 * time.Second
 	}
-	if readHeaderTimeout == 0 {
+	if readHeaderErr != nil {
 		readHeaderTimeout = 10 * time.Second
 	}
-	if writeTimeout == 0 {
+	if writeErr != nil {
 		writeTimeout = 30 * time.Second
 	}
-	if idleTimeout == 0 {
+	if idleErr != nil {
 		idleTimeout = 120 * time.Second
 	}
 

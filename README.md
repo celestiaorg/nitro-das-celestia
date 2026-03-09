@@ -8,29 +8,130 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
 
 ## Docker
 
-`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.5.4`
+`FROM ghcr.io/celestiaorg/nitro-das-celestia:v0.7.0`
 
-## Example usage
+## Configuration
 
+Starting from v0.7.0, the server uses a TOML configuration file instead of CLI flags.
+
+### Quick Start
+
+1. Copy the example config:
+```bash
+cp config.example.toml config.toml
 ```
-./celestia-server --enable-rpc --rpc-addr $RPC_ADDR \
-      --rpc-port $RPC_PORT \
-      --celestia.auth-token $AUTH_TOKEN \
-      --celestia.gas-price $GAS_PRICE \
-      --celestia.gas-multiplier $GAS_MULTIPLIER \
-      --celestia.namespace-id $NAMESPACEID \
-      --celestia.rpc $CELESTIA_NODE_ENDPOINT
+
+2. Edit the config file with your settings:
+```bash
+vim config.toml
 ```
+
+3. Start the server:
+```bash
+./celestia-server --config config.toml
+```
+
+### Example config.toml
+
+```toml
+[server]
+rpc_addr = "0.0.0.0"
+rpc_port = 9876
+
+[celestia]
+namespace_id = "000008e5f679bf7116cb"
+gas_price = 0.01
+gas_multiplier = 1.01
+network = "celestia"  # or "mocha-4" for testnet
+with_writer = true
+
+# Reader configuration - connects to DA Bridge node
+[celestia.reader]
+rpc = "http://localhost:26658"
+auth_token = "${DA_AUTH_TOKEN}"  # Supports env var expansion
+
+# Writer configuration - connects to Celestia Core gRPC
+[celestia.writer]
+core_grpc = "localhost:9090"
+
+# Signer configuration
+[celestia.signer]
+type = "local"  # or "remote" for popsigner
+
+[celestia.signer.local]
+key_name = "my_celes_key"
+key_path = ""  # Uses default: ~/.celestia-light-{network}/keys
+backend = "test"
+
+# For remote signing with popsigner
+# [celestia.signer]
+# type = "remote"
+# [celestia.signer.remote]
+# api_key = "${POPSIGNER_API_KEY}"
+# key_id = "key_xxxxx"
+
+[logging]
+level = "INFO"
+type = "plaintext"
+```
+
+### Environment Variable Support
+
+The config file supports environment variable expansion using `${VAR_NAME}` syntax:
+```toml
+auth_token = "${DA_AUTH_TOKEN}"
+api_key = "${POPSIGNER_API_KEY}"
+```
+
+### Signer Types
+
+**Local Signing** - Uses a local keyring (default):
+```toml
+[celestia.signer]
+type = "local"
+[celestia.signer.local]
+key_name = "my_celes_key"
+backend = "test"
+```
+
+**Remote Signing** - Uses popsigner for remote key management:
+```toml
+[celestia.signer]
+type = "remote"
+[celestia.signer.remote]
+api_key = "${POPSIGNER_API_KEY}"
+key_id = "key_xxxxx"
+```
+
+## Legacy CLI Flags (Deprecated)
+
+The previous CLI flag-based configuration is deprecated. See the migration guide below.
+
+### Migration from CLI Flags
+
+| Old CLI Flag | New TOML Path |
+|-------------|---------------|
+| `--celestia.rpc` | `celestia.reader.rpc` |
+| `--celestia.auth-token` | `celestia.reader.auth_token` |
+| `--celestia.core-url` | `celestia.writer.core_grpc` |
+| `--celestia.namespace-id` | `celestia.namespace_id` |
+| `--celestia.key-name` | `celestia.signer.local.key_name` |
+| `--celestia.experimental-tx-client` | (removed - now default) |
+| `--rpc-addr` | `server.rpc_addr` |
+| `--rpc-port` | `server.rpc_port` |
+| `--log-level` | `logging.level` |
 
 ## Running Docker Image
 
-```
+```bash
+# Mount your config file into the container
 docker run --name celestia-server \
-      -p 26657:26657 \
-      -e AUTH_TOKEN=your_token  \
-      -e NAMESPACEID=your_namespace  \
-      -e CELESTIA_NODE_ENDPOINT=your_node_endpoint \
-      ghcr.io/celestiaorg/nitro-das-celestia:v0.4.3
+      -p 9876:9876 \
+      -v $(pwd)/config.toml:/config.toml \
+      -e DA_AUTH_TOKEN=your_token \
+      -e POPSIGNER_API_KEY=your_api_key \
+      ghcr.io/celestiaorg/nitro-das-celestia:v0.7.0 \
+      --config /config.toml
 ```
 
 ## Example Docker Compose

@@ -1,0 +1,123 @@
+# Celestia DAS Server Configuration
+# Copy this file to config.toml and modify as needed
+
+[server]
+# RPC server listen address
+rpc_addr = "0.0.0.0"
+# RPC server listen port
+rpc_port = 9876
+# HTTP request body size limit (0 uses default 5MB limit)
+rpc_body_limit = 0
+# HTTP server timeouts
+read_timeout = "30s"
+read_header_timeout = "10s"
+write_timeout = "30s"
+idle_timeout = "120s"
+
+[celestia]
+# Namespace ID for blob operations (hex string)
+namespace_id = "000008e5f679bf7116cb"
+# Gas price for blob transactions
+gas_price = 0.01
+# Gas price multiplier for retry attempts
+gas_multiplier = 1.01
+# Celestia network: "celestia" for mainnet, "mocha-4" for testnet, "arabica" for devnet
+network = "celestia"
+# Enable blob submission (writer mode)
+with_writer = true
+# Disable actual blob submissions (for testing)
+noop_writer = false
+# Cache cleanup interval
+cache_time = "30m"
+# DANGEROUS: Enable reorg on read failure (use with caution)
+dangerous_reorg_on_read_failure = false
+
+# Reader configuration - connects to DA Bridge node for reading blobs
+[celestia.reader]
+# DA Bridge node RPC endpoint
+rpc = "http://localhost:26658"
+# Auth token for DA node access (supports env vars: ${DA_AUTH_TOKEN})
+auth_token = ""
+# Enable TLS for DA node connection
+enable_tls = false
+
+# Writer configuration - connects to Celestia Core gRPC for blob submission
+[celestia.writer]
+# Celestia Core gRPC endpoint
+core_grpc = "localhost:9090"
+# Auth token for Core node (supports env vars: ${CORE_TOKEN})
+core_token = ""
+# Enable TLS for Core node connection
+enable_tls = false
+
+# Signer configuration for blob transaction signing
+[celestia.signer]
+# Signer type: "local" for local keyring, "remote" for popsigner
+type = "local"
+
+# Local signer configuration (used when type = "local")
+[celestia.signer.local]
+# Key name in the keyring
+key_name = "my_celes_key"
+# Path to keyring directory (empty uses default: ~/.celestia-light-{network}/keys)
+key_path = ""
+# Keyring backend: "test", "file", "os", "kwallet", "pass", "keychain"
+backend = "test"
+
+# Remote signer configuration - popsigner (used when type = "remote")
+[celestia.signer.remote]
+# POPSigner API key (supports env vars: ${POPSIGNER_API_KEY})
+api_key = ""
+# POPSigner Key ID
+key_id = ""
+# Custom POPSigner endpoint (optional, leave empty for default)
+base_url = ""
+
+# Retry configuration for failed blob operations
+[celestia.retry]
+# Maximum number of retry attempts
+max_retries = 5
+# Initial backoff duration
+initial_backoff = "10s"
+# Maximum backoff duration
+max_backoff = "120s"
+# Backoff multiplier (exponential backoff)
+backoff_factor = 2.0
+
+# Validator configuration for Blobstream proof validation
+[celestia.validator]
+# Parent chain RPC endpoint (e.g., Ethereum/Arbitrum)
+eth_rpc = ""
+# Blobstream contract address
+blobstream_addr = ""
+# Seconds between Blobstream event polling
+sleep_time = 3600
+
+# Fallback to Arbitrum AnyTrust DAS
+[fallback]
+# Enable fallback to AnyTrust DAS when Celestia operations fail
+enabled = false
+# AnyTrust DAS RPC endpoint
+das_rpc = ""
+
+# Logging configuration
+[logging]
+# Log level: CRIT, ERROR, WARN, INFO, DEBUG, TRACE
+level = "INFO"
+# Log format: "plaintext" or "json"
+type = "plaintext"
+
+# Metrics and profiling configuration
+[metrics]
+# Enable Prometheus metrics
+enabled = false
+# Metrics server listen address
+addr = "127.0.0.1"
+# Metrics server listen port
+port = 6060
+# Enable pprof profiling
+pprof = false
+# PProf server listen address
+pprof_addr = "127.0.0.1"
+# PProf server listen port
+pprof_port = 6061

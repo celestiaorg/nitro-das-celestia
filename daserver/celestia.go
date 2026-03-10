@@ -68,6 +68,7 @@ type DAConfig struct {
 	DangerousReorgOnReadFailure bool               `koanf:"dangerous-reorg-on-read-failure"`
 	RetryConfig                 RetryBackoffConfig `koanf:"retry-config"`
 	AWSKMSConfig                AWSKMSConfig       `koanf:"aws-kms-config"`
+	L1ClientOverride            *ethclient.Client  `koanf:"-"`
 }
 
 // AWSKMSConfig configures the AWS KMS backend for signing Celestia transactions.
@@ -196,17 +197,29 @@ type CelestiaDA struct {
 	messageCache sync.Map
 }
 
+func (c *CelestiaDA) proofEthClient() (*ethclient.Client, func(), error) {
+	if c.Cfg.L1ClientOverride != nil {
+		return c.Cfg.L1ClientOverride, func() {}, nil
+	}
+
+	ethRpc, err := ethclient.Dial(c.Cfg.ValidatorConfig.EthClient)
+	if err != nil {
+		return nil, nil, err
+	}
+	return ethRpc, func() { ethRpc.Close() }, nil
+}
+
 func (c *CelestiaDA) MaxMessageSize(ctx context.Context) (int, error) {
 	// Prefer the deployed CelestiaDAProofValidator as the source of truth for
 	// max message size (owner-updatable on-chain). Fall back to local default
 	// if configuration or RPC reads are unavailable.
 	if c.Cfg != nil && c.Cfg.ValidatorConfig.EthClient != "" && c.Cfg.ValidatorConfig.ProofValidatorAddr != "" {
-		ethRpc, err := ethclient.Dial(c.Cfg.ValidatorConfig.EthClient)
+		ethRpc, closeEth, err := c.proofEthClient()
 		if err != nil {
 			log.Warn("Couldn't dial to eth rpc for proof validator max message size, falling back to local default", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
 			return celestiaDefaultMaxBytes, nil
 		}
-		defer ethRpc.Close()
+		defer closeEth()
 
 		proofValidatorAddr := common.HexToAddress(c.Cfg.ValidatorConfig.ProofValidatorAddr)
 		bound := bind.NewBoundContract(proofValidatorAddr, mustCelestiaDAProofValidatorABI(), ethRpc, nil, nil)
@@ -812,13 +825,13 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		return nil, fmt.Errorf("no celestia prover config")
 	}
 
-	ethRpc, err := ethclient.Dial(c.Cfg.ValidatorConfig.EthClient)
+	ethRpc, closeEth, err := c.proofEthClient()
 	if err != nil {
 		celestiaValidationFailureCounter.Inc(1)
 		log.Error("Couldn't dial to eth rpc for Blobstream proof", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
 		return nil, err
 	}
-	defer ethRpc.Close()
+	defer closeEth()
 
 	blobstream, err := blobstreamx.NewBindings(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
 	if err != nil {
@@ -1360,13 +1373,13 @@ func (c *CelestiaDA) generateCelestiaProof(
 		return nil, fmt.Errorf("no celestia prover config")
 	}
 
-	ethRpc, err := ethclient.Dial(c.Cfg.ValidatorConfig.EthClient)
+	ethRpc, closeEth, err := c.proofEthClient()
 	if err != nil {
 		celestiaValidationFailureCounter.Inc(1)
 		log.Error("Couldn't dial to eth rpc for Blobstream proof", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
 		return nil, err
 	}
-	defer ethRpc.Close()
+	defer closeEth()
 
 	blobstream, err := blobstreamx.NewBindings(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
 	if err != nil {

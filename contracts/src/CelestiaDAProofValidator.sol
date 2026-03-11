@@ -25,7 +25,12 @@ import "../lib/DAVerifier.sol";
 /// [version(1)=0x01][offset(8)][payloadSize(8)][chunkLen(1)][firstShareIndexInBlob(8)][shareCount(1)][abi.encode(address, SharesProof)]
 ///
 /// customProof (certificate-validity):
-/// [claimedValid(1)][version(1)=0x01]
+/// [claimedValid(1)][version(1)=0x01][abi.encode(AttestationProof)]
+///
+/// Onchain certificate validity is defined by certificate structure and
+/// Blobstream attestation of the certificate's (blockHeight, dataRoot) tuple.
+/// `txCommitment` is carried in the certificate format but is not independently
+/// re-derived or enforced in Solidity.
 contract CelestiaDAProofValidator is ICustomDAProofValidator {
     uint256 private constant CERT_SIZE_FIELD_LEN = 8;
     uint256 private constant CERT_V1_LEN = 92;
@@ -202,14 +207,14 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         return out;
     }
 
-    function validateCertificate(bytes calldata proof) external pure override returns (bool isValid) {
-        if (proof.length < CERT_SIZE_FIELD_LEN + CERT_V1_LEN + 1) {
+    function validateCertificate(bytes calldata proof) external view override returns (bool isValid) {
+        if (proof.length < CERT_SIZE_FIELD_LEN + 2) {
             return false;
         }
 
         uint256 certSize = uint256(uint64(bytes8(proof[0:CERT_SIZE_FIELD_LEN])));
         uint256 afterCert = CERT_SIZE_FIELD_LEN + certSize;
-        if (proof.length < afterCert + 1) {
+        if (proof.length < afterCert + 2) {
             return false;
         }
 
@@ -218,14 +223,42 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             return false;
         }
 
-        uint8 claimedValid = uint8(proof[afterCert]);
-        if (proof.length > afterCert + 1) {
-            uint8 proofVersion = uint8(proof[afterCert + 1]);
-            if (proofVersion != VALIDITY_PROOF_VERSION) {
-                return false;
-            }
+        bytes calldata custom = proof[afterCert + 1:];
+        if (custom.length < 1) {
+            return false;
         }
-        return claimedValid == 1;
+        if (uint8(custom[0]) != VALIDITY_PROOF_VERSION) {
+            return false;
+        }
+
+        bytes calldata attestationProofData = custom[1:];
+        if (attestationProofData.length == 0) {
+            return false;
+        }
+
+        AttestationProof memory attestationProof;
+        try this.decodeAttestationProof(attestationProofData) returns (AttestationProof memory decoded) {
+            attestationProof = decoded;
+        } catch {
+            return false;
+        }
+
+        uint64 certHeight = uint64(bytes8(certificate[4:12]));
+        bytes32 certDataRoot = bytes32(certificate[60:92]);
+        if (attestationProof.tuple.height != certHeight) {
+            return false;
+        }
+        if (attestationProof.tuple.dataRoot != certDataRoot) {
+            return false;
+        }
+
+        return IDAOracle(blobstreamX).verifyAttestation(
+            attestationProof.tupleRootNonce, attestationProof.tuple, attestationProof.proof
+        );
+    }
+
+    function decodeAttestationProof(bytes calldata proofData) external pure returns (AttestationProof memory) {
+        return abi.decode(proofData, (AttestationProof));
     }
 
     function _isValidCertStructure(bytes calldata cert) internal pure returns (bool) {

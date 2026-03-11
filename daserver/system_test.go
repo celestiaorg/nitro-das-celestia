@@ -322,7 +322,8 @@ func TestDAProviderAPI(t *testing.T) {
 }
 
 // TestGenerateCertificateValidityProof stores a blob and calls
-// daprovider_generateCertificateValidityProof, verifying the proof claims valid.
+// daprovider_generateCertificateValidityProof, verifying the proof claims valid
+// and includes attestation data after the version marker.
 func TestGenerateCertificateValidityProof(t *testing.T) {
 	_, endpoint, cleanup := setupTestEnvironment(t)
 	defer cleanup()
@@ -353,6 +354,7 @@ func TestGenerateCertificateValidityProof(t *testing.T) {
 	claimedValid := result.Proof[0]
 	t.Logf("Validity proof (%d bytes): claimedValid=0x%02x", len(result.Proof), claimedValid)
 	require.Equal(t, byte(0x01), claimedValid, "cert should be claimed valid")
+	require.Greater(t, len(result.Proof), 2, "validity proof should include attestation proof bytes")
 }
 
 // TestReadInvalidCertFastFail verifies that reading a cert with a bogus block

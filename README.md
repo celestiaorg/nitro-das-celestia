@@ -163,6 +163,23 @@ For the `blobstream` flag, you want to pass an address for the blobstream instan
 
 For the `eth-rpc` flag, you just need to provide an rpc for the parent chain, and since you are running a node you likely already have an endpoint available in your nitro node config that can be re-used here. (NOTE: connection type is http)
 
+## Certificate validity semantics
+
+The onchain `validateCertificate` path only authenticates the certificate's
+`(blockHeight, dataRoot)` tuple against Blobstream. This is the validity rule
+that needs to match Nitro's fraud-proof execution.
+
+- `validateCertificate` proves certificate structure and Blobstream attestation
+  of `(blockHeight, dataRoot)`.
+- `validateReadPreimage` proves the shares and recovered payload bytes are
+  consistent with that attested `dataRoot`.
+- `txCommitment` remains part of the certificate format, but it is not
+  independently re-derived in Solidity and must not be treated as a standalone
+  certificate-invalidity condition in challenge tests.
+
+For negative tests that need an invalid Celestia certificate, mutate
+`blockHeight` or `dataRoot`, not `txCommitment`.
+
 ## Testing GetProof
 
 While e2e tests excist, users might want to test and verify that the da server's `GetProof` method functions as expected, the [`blobstream_test.go`](https://github.com/celestiaorg/nitro-das-celestia/blob/main/das/blobstream_test.go) provides a way to do this.

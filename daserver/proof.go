@@ -379,3 +379,51 @@ func packBlobstreamProof(blobstreamAddr common.Address, nsNode NamespaceNode, ro
 		},
 	)
 }
+
+func packValidityProof(attProof AttestationProof) ([]byte, error) {
+	args := abi.Arguments{
+		{
+			Name: "attestationProof",
+			Type: mustABIType("tuple", []abi.ArgumentMarshaling{
+				{Name: "tupleRootNonce", Type: "uint256"},
+				{Name: "tuple", Type: "tuple", Components: []abi.ArgumentMarshaling{
+					{Name: "height", Type: "uint256"},
+					{Name: "dataRoot", Type: "bytes32"},
+				}},
+				{Name: "proof", Type: "tuple", Components: []abi.ArgumentMarshaling{
+					{Name: "sideNodes", Type: "bytes32[]"},
+					{Name: "key", Type: "uint256"},
+					{Name: "numLeaves", Type: "uint256"},
+				}},
+			}),
+		},
+	}
+
+	type rowProofABI struct {
+		SideNodes [][32]byte
+		Key       *big.Int
+		NumLeaves *big.Int
+	}
+	type dataTupleABI struct {
+		Height   *big.Int
+		DataRoot [32]byte
+	}
+	type attProofABI struct {
+		TupleRootNonce *big.Int
+		Tuple          dataTupleABI
+		Proof          rowProofABI
+	}
+
+	return args.Pack(attProofABI{
+		TupleRootNonce: attProof.TupleRootNonce,
+		Tuple: dataTupleABI{
+			Height:   attProof.Tuple.Height,
+			DataRoot: attProof.Tuple.DataRoot,
+		},
+		Proof: rowProofABI{
+			SideNodes: attProof.Proof.SideNodes,
+			Key:       attProof.Proof.Key,
+			NumLeaves: attProof.Proof.NumLeaves,
+		},
+	})
+}

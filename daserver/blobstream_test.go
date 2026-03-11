@@ -42,7 +42,7 @@ func (f *fakeCelestiaReader) GenerateCertificateValidityProof(
 	context.Context,
 	*cert.CelestiaDACertV1,
 ) ([]byte, error) {
-	return []byte{0x01, 0x01}, nil
+	return []byte{0x01, 0x01, 0xaa}, nil
 }
 
 func makeCertBytes(t *testing.T) []byte {
@@ -87,6 +87,15 @@ func TestGenerateCertificateValidityProof_InvalidCertificateReturnsClaimedInvali
 	res, err := v.GenerateCertificateValidityProof([]byte{0x01, 0x02}).Await(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []byte{0x00, 0x01}, res.Proof)
+}
+
+func TestGenerateCertificateValidityProof_DelegatesProofPayload(t *testing.T) {
+	reader := &fakeCelestiaReader{}
+	v := validatorpkg.NewCelestiaValidator(reader)
+
+	res, err := v.GenerateCertificateValidityProof(makeCertBytes(t)).Await(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x01, 0x01, 0xaa}, res.Proof)
 }
 
 func TestBuildReadPreimageProofV1_Layout(t *testing.T) {

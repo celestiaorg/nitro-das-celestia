@@ -1193,22 +1193,21 @@ func expectedChunkLen(offset, payloadSize uint64) uint8 {
 }
 
 func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certificate *cert.CelestiaDACertV1) ([]byte, error) {
-	valid, err := c.validateCertificate(ctx, certificate)
+	valid, validityProof, err := c.generateCertificateValidityProof(ctx, certificate)
 	if err != nil {
-		// Return transient errors to the caller so the RPC layer can distinguish
-		// them from a definitive invalidity signal.
 		return nil, err
 	}
 
 	// Custom validity proof format:
-	// [claimedValid(1)][version(1)=0x01]
-	proof := make([]byte, 2)
+	// [claimedValid(1)][version(1)=0x01][abi.encode(AttestationProof)]
+	proof := make([]byte, 0, 2+len(validityProof))
 	if valid {
-		proof[0] = 0x01
+		proof = append(proof, 0x01)
 	} else {
-		proof[0] = 0x00
+		proof = append(proof, 0x00)
 	}
-	proof[1] = 0x01
+	proof = append(proof, 0x01)
+	proof = append(proof, validityProof...)
 	return proof, nil
 }
 
@@ -1266,83 +1265,138 @@ func (c *CelestiaDA) validateCertificate(ctx context.Context, certificate *cert.
 		return false, nil
 	}
 
-	if bytes.Equal(certificate.TxCommitment[:], make([]byte, 32)) {
-		return false, nil
-	}
-
 	if bytes.Equal(certificate.DataRoot[:], make([]byte, 32)) {
 		return false, nil
 	}
-	header, err := c.ReadClient.Header.GetByHeight(ctx, certificate.BlockHeight)
+	valid, _, err := c.generateCertificateValidityProof(ctx, certificate)
+	return valid, err
+}
+
+func (c *CelestiaDA) generateCertificateValidityProof(
+	ctx context.Context,
+	certificate *cert.CelestiaDACertV1,
+) (bool, []byte, error) {
+	if certificate == nil {
+		return false, nil, nil
+	}
+	if certificate.SharesLength == 0 {
+		return false, nil, nil
+	}
+	if bytes.Equal(certificate.DataRoot[:], make([]byte, 32)) {
+		return false, nil, nil
+	}
+
+	attestationProof, err := c.generateCertificateAttestationProof(ctx, certificate)
+	if err != nil {
+		return false, nil, err
+	}
+	if attestationProof == nil {
+		return false, nil, nil
+	}
+
+	proofData, err := packValidityProof(*attestationProof)
+	if err != nil {
+		return false, nil, err
+	}
+	return true, proofData, nil
+}
+
+func (c *CelestiaDA) generateCertificateAttestationProof(
+	ctx context.Context,
+	certificate *cert.CelestiaDACertV1,
+) (*AttestationProof, error) {
+	if c.Cfg.ValidatorConfig.EthClient == "" || c.Cfg.ValidatorConfig.BlobstreamAddr == "" {
+		return nil, fmt.Errorf("no celestia prover config")
+	}
+
+	ethRpc, closeEth, err := c.proofEthClient()
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Couldn't dial to eth rpc for Blobstream proof", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "err", err)
+		return nil, err
+	}
+	defer closeEth()
+
+	blobstream, err := blobstreamx.NewBindings(common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), ethRpc)
+	if err != nil {
+		celestiaValidationFailureCounter.Inc(1)
+		log.Error("Couldn't instantiate client for blobstream", "rpcAddr", c.Cfg.ValidatorConfig.EthClient, "blobstreamAddr", common.HexToAddress(c.Cfg.ValidatorConfig.BlobstreamAddr), "err", err)
+		return nil, err
+	}
+
+	latestBlockNumber, err := ethRpc.BlockNumber(ctx)
+	if err != nil {
+		log.Warn("could not fetch latest L1 block", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
+		Pending:     false,
+		BlockNumber: big.NewInt(int64(latestBlockNumber)),
+		Context:     ctx,
+	})
+	if err != nil {
+		log.Warn("could not fetch latestBlock on BlobstreamX", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	backwards := certificate.BlockHeight < latestCelestiaBlock
+
+	event, err := c.filter(ctx, ethRpc, blobstream, latestBlockNumber, certificate.BlockHeight, backwards)
+	if err != nil {
+		var validationErr *daprovider.CertificateValidationError
+		if errors.As(err, &validationErr) {
+			return nil, nil
+		}
+		log.Warn("event filtering error", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
+	}
+
+	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(
+		ctx, certificate.BlockHeight, event.StartBlock, event.EndBlock,
+	)
 	if err != nil {
 		if isTransientError(err) {
-			return false, err
+			log.Warn("could not get data root proof", "err", err)
+			celestiaValidationFailureCounter.Inc(1)
+			return nil, err
 		}
-		return false, nil
+		return nil, nil
 	}
 
-	if !bytes.Equal(header.DataHash, certificate.DataRoot[:]) {
-		return false, nil
-	}
-
-	squareSize := uint64(len(header.DAH.RowRoots))
-	if squareSize == 0 {
-		return false, nil
-	}
-	odsSize := squareSize / 2
-	if odsSize == 0 {
-		return false, nil
-	}
-
-	if certificate.Start >= odsSize*odsSize {
-		return false, nil
-	}
-
-	// Prevent uint64 wraparound when computing:
-	//   endIndexOds := certificate.Start + certificate.SharesLength - 1
-	// If Start is too close to MaxUint64, adding (SharesLength-1) would overflow
-	// and wrap to a small value, corrupting bounds checks.
-	if certificate.Start > math.MaxUint64-(certificate.SharesLength-1) {
-		return false, nil
-	}
-
-	endIndexOds := certificate.Start + certificate.SharesLength - 1
-	if endIndexOds >= odsSize*odsSize {
-		return false, nil
-	}
-
-	blobData, err := c.ReadClient.Blob.Get(ctx, certificate.BlockHeight, *c.Namespace, certificate.TxCommitment[:])
+	attestationProof := toAttestationProof(
+		event.ProofNonce.Uint64(),
+		certificate.BlockHeight,
+		certificate.DataRoot,
+		dataRootProof,
+	)
+	sideNodes := make([][32]byte, len(attestationProof.Proof.SideNodes))
+	copy(sideNodes, attestationProof.Proof.SideNodes)
+	valid, err := blobstream.VerifyAttestation(
+		&bind.CallOpts{Context: ctx},
+		event.ProofNonce,
+		blobstreamx.DataRootTuple{
+			Height:   new(big.Int).Set(attestationProof.Tuple.Height),
+			DataRoot: attestationProof.Tuple.DataRoot,
+		},
+		blobstreamx.BinaryMerkleProof{
+			SideNodes: sideNodes,
+			Key:       new(big.Int).Set(attestationProof.Proof.Key),
+			NumLeaves: new(big.Int).Set(attestationProof.Proof.NumLeaves),
+		},
+	)
 	if err != nil {
-		if isTransientError(err) {
-			return false, err
-		}
-		return false, nil
+		log.Warn("could not verify certificate attestation", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
 	}
-	if blobData == nil {
-		return false, nil
+	if !valid {
+		return nil, nil
 	}
-
-	length, err := blobData.Length()
-	if err != nil {
-		if isTransientError(err) {
-			return false, err
-		}
-		return false, nil
-	}
-	if length == 0 || uint64(length) != certificate.SharesLength {
-		return false, nil
-	}
-	blobIndex := uint64(blobData.Index())
-	startRow := blobIndex / squareSize
-	if odsSize*startRow > blobIndex {
-		return false, nil
-	}
-	startIndexOds := blobIndex - odsSize*startRow
-	if startIndexOds != certificate.Start {
-		return false, nil
-	}
-
-	return true, nil
+	return &attestationProof, nil
 }
 
 func isTransientError(err error) bool {

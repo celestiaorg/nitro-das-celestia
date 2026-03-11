@@ -173,6 +173,8 @@ that needs to match Nitro's fraud-proof execution.
   of `(blockHeight, dataRoot)`.
 - `validateReadPreimage` proves the shares and recovered payload bytes are
   consistent with that attested `dataRoot`.
+- Normal payload recovery uses the attested share range `(start, sharesLength)`
+  and DA row data; it does not fetch blobs by `txCommitment`.
 - `txCommitment` remains part of the certificate format, but it is not
   independently re-derived in Solidity and must not be treated as a standalone
   certificate-invalidity condition in challenge tests.

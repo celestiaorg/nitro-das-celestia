@@ -275,6 +275,46 @@ func TestCelestiaIntegration(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("Read Ignores TxCommitment Mutation", func(t *testing.T) {
+		message := []byte("tx commitment mutation " + time.Now().Format(time.RFC3339Nano))
+
+		var certBytes []byte
+		err = client.Call(&certBytes, "celestia_store", hexutil.Bytes(message))
+		require.NoError(t, err)
+		require.Len(t, certBytes, cert.CelestiaDACertV1Len)
+
+		mutatedCert := &cert.CelestiaDACertV1{}
+		require.NoError(t, mutatedCert.UnmarshalBinary(certBytes))
+		mutatedCert.TxCommitment[0] ^= 0xff
+		mutatedCert.TxCommitment[len(mutatedCert.TxCommitment)-1] ^= 0x55
+
+		var readResult types.ReadResult
+		err = client.Call(&readResult, "celestia_read", mutatedCert)
+		require.NoError(t, err, "read should not depend on txCommitment")
+		require.Equal(t, message, readResult.Message)
+
+		seqHeader := make([]byte, 40)
+		seqHeader[40-2] = cert.CustomDAHeaderFlag
+		seqHeader[40-1] = cert.CelestiaMessageHeaderFlag
+		mutatedCertBytes, marshalErr := mutatedCert.MarshalBinary()
+		require.NoError(t, marshalErr)
+		seqMsg := append(seqHeader, mutatedCertBytes...)
+
+		type PayloadResult struct {
+			Payload []byte `json:"Payload"`
+		}
+		var payloadResult PayloadResult
+		err = client.Call(
+			&payloadResult,
+			"daprovider_recoverPayload",
+			hexutil.Uint64(1),
+			common.Hash{},
+			hexutil.Bytes(seqMsg),
+		)
+		require.NoError(t, err, "recoverPayload should not depend on txCommitment")
+		require.Equal(t, message, payloadResult.Payload)
+	})
 }
 
 // TestDAProviderAPI exercises the daprovider_* namespace:

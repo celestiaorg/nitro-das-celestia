@@ -22,12 +22,13 @@ import (
 	"github.com/celestiaorg/celestia-node/blob"
 	"github.com/celestiaorg/celestia-node/header"
 	"github.com/celestiaorg/celestia-node/nodebuilder/p2p"
+	nodebuildershare "github.com/celestiaorg/celestia-node/nodebuilder/share"
+	"github.com/celestiaorg/celestia-node/share/shwap"
 	"github.com/celestiaorg/celestia-node/state"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
-	"github.com/celestiaorg/rsmt2d"
 	"github.com/cometbft/cometbft/crypto/merkle"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -727,47 +728,6 @@ func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV
 		return nil, certificateValidationError("data root mismatch")
 	}
 
-	// Fetch blob with retry
-	var blobData []byte
-	var sharesLength int
-	err = c.retryWithBackoff(ctx, func() error {
-		blob, err := c.ReadClient.Blob.Get(ctx, certificate.BlockHeight, *c.Namespace, certificate.TxCommitment[:])
-		if err != nil {
-			return err
-		}
-
-		_ = blob.Index() // Ensure blob is initialized
-		blobData = blob.Data()
-		length, err := blob.Length()
-		if err != nil {
-			return fmt.Errorf("could not get shares length: %w", err)
-		}
-		if length == 0 {
-			return fmt.Errorf("blob found, but has shares length zero")
-		}
-		sharesLength = length
-		return nil
-	})
-	if err != nil {
-		celestiaFailureCounter.Inc(1)
-		return nil, fmt.Errorf("failed to read blob after retries: %w", err)
-	}
-
-	// Fetch EDS with retry
-	var extendedSquare *rsmt2d.ExtendedDataSquare
-	err = c.retryWithBackoff(ctx, func() error {
-		var err error
-		extendedSquare, err = c.ReadClient.Share.GetEDS(ctx, certificate.BlockHeight)
-		if err != nil {
-			return fmt.Errorf("failed to get EDS, height=%v: %w", certificate.BlockHeight, err)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Validation logic (no changes needed here)
 	squareSize := uint64(len(header.DAH.RowRoots))
 	odsSize := squareSize / 2
 	startRow := certificate.Start / odsSize
@@ -798,21 +758,110 @@ func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV
 		return nil, certificateValidationError("invalid share range ordering")
 	}
 
-	if uint64(sharesLength) != certificate.SharesLength || sharesLength == 0 {
+	rangeEnd := certificate.Start + certificate.SharesLength
+	if rangeEnd > math.MaxInt {
+		return nil, certificateValidationError("share range too large")
+	}
+
+	var shareRange *nodebuildershare.GetRangeResult
+	err = c.retryWithBackoff(ctx, func() error {
+		var err error
+		shareRange, err = c.ReadClient.Share.GetRange(
+			ctx,
+			certificate.BlockHeight,
+			int(certificate.Start),
+			int(rangeEnd),
+		)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		celestiaFailureCounter.Inc(1)
+		return nil, fmt.Errorf("failed to read share range after retries: %w", err)
+	}
+	if shareRange == nil {
+		celestiaFailureCounter.Inc(1)
+		return nil, certificateValidationError("share range missing")
+	}
+	if err := shareRange.Verify(header.DAH.Hash()); err != nil {
+		celestiaFailureCounter.Inc(1)
+		return nil, certificateValidationError(fmt.Sprintf("share range proof invalid: %v", err))
+	}
+	rows := [][][]byte{}
+	for i := startRow; i <= endRow; i++ {
+		var row shwap.Row
+		err = c.retryWithBackoff(ctx, func() error {
+			var err error
+			row, err = c.ReadClient.Share.GetRow(ctx, certificate.BlockHeight, int(i))
+			return err
+		})
+		if err != nil {
+			celestiaFailureCounter.Inc(1)
+			return nil, fmt.Errorf("failed to read row %d after retries: %w", i, err)
+		}
+		fullRowShares, err := row.Shares()
+		if err != nil {
+			celestiaFailureCounter.Inc(1)
+			return nil, fmt.Errorf("failed to reconstruct row %d: %w", i, err)
+		}
+		rows = append(rows, libshare.ToBytes(fullRowShares))
+	}
+
+	result, err := buildReadResultFromShares(
+		certificate,
+		readResultShares{
+			RowRoots:    header.DAH.RowRoots,
+			ColumnRoots: header.DAH.ColumnRoots,
+			Shares:      shareRange.Shares,
+			Rows:        rows,
+		},
+	)
+	if err != nil {
+		celestiaFailureCounter.Inc(1)
+		return nil, err
+	}
+	return result, nil
+}
+
+type readResultShares struct {
+	RowRoots    [][]byte
+	ColumnRoots [][]byte
+	Shares      []libshare.Share
+	Rows        [][][]byte
+}
+
+func buildReadResultFromShares(
+	certificate *cert.CelestiaDACertV1,
+	input readResultShares,
+) (*types.ReadResult, error) {
+	if uint64(len(input.Shares)) != certificate.SharesLength || len(input.Shares) == 0 {
 		return nil, certificateValidationError("share length mismatch")
 	}
 
-	rows := [][][]byte{}
-	for i := startRow; i <= endRow; i++ {
-		rows = append(rows, extendedSquare.Row(uint(i)))
+	squareSize := uint64(len(input.RowRoots))
+	odsSize := squareSize / 2
+	startRow := certificate.Start / odsSize
+	endIndexOds := certificate.Start + certificate.SharesLength - 1
+	endRow := endIndexOds / odsSize
+
+	parsedBlobs, err := libshare.ParseBlobs(input.Shares)
+	if err != nil {
+		return nil, certificateValidationError(fmt.Sprintf("could not parse shares into blob: %v", err))
+	}
+	if len(parsedBlobs) != 1 {
+		return nil, certificateValidationError("share range did not resolve to exactly one blob")
+	}
+	if len(input.Rows) != int(endRow-startRow+1) {
+		return nil, certificateValidationError("row count mismatch")
 	}
 
 	return &types.ReadResult{
-		Message:     blobData,
-		RowRoots:    header.DAH.RowRoots,
-		ColumnRoots: header.DAH.ColumnRoots,
-		Rows:        rows,
+		Message:     parsedBlobs[0].Data(),
+		RowRoots:    input.RowRoots,
+		ColumnRoots: input.ColumnRoots,
+		Rows:        input.Rows,
 		SquareSize:  squareSize,
 		StartRow:    startRow,
 		EndRow:      endRow,

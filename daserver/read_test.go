@@ -50,3 +50,70 @@ func TestBuildReadResultFromShares_IgnoresTxCommitmentMutation(t *testing.T) {
 	require.Equal(t, message, result.Message)
 	require.NoError(t, validateReadResult(result, certificate))
 }
+
+func TestBuildReadResultFromShares_RejectsWrongShareCount(t *testing.T) {
+	namespace, err := libshare.NewV0Namespace(bytes.Repeat([]byte{0x24}, libshare.NamespaceVersionZeroIDSize))
+	require.NoError(t, err)
+
+	blob, err := nodeblob.NewBlob(libshare.ShareVersionZero, namespace, []byte("share count mismatch"), nil)
+	require.NoError(t, err)
+
+	shares, err := nodeblob.BlobsToShares(blob)
+	require.NoError(t, err)
+
+	eds, err := appda.ExtendShares(libshare.ToBytes(shares))
+	require.NoError(t, err)
+	dah, err := appda.NewDataAvailabilityHeader(eds)
+	require.NoError(t, err)
+
+	var dataRoot [32]byte
+	copy(dataRoot[:], dah.Hash())
+	certificate := cert.NewCelestiaCertificate(12, 0, uint64(len(shares))+1, [32]byte{0xaa}, dataRoot)
+
+	_, err = buildReadResultFromShares(
+		certificate,
+		readResultShares{
+			RowRoots:    dah.RowRoots,
+			ColumnRoots: dah.ColumnRoots,
+			Shares:      shares,
+			Rows:        [][][]byte{eds.Row(0)},
+		},
+	)
+	require.ErrorContains(t, err, "share length mismatch")
+}
+
+func TestValidateReadResult_RejectsMutatedDataRoot(t *testing.T) {
+	namespace, err := libshare.NewV0Namespace(bytes.Repeat([]byte{0x73}, libshare.NamespaceVersionZeroIDSize))
+	require.NoError(t, err)
+
+	message := []byte("mutated data root should fail validation")
+	blob, err := nodeblob.NewBlob(libshare.ShareVersionZero, namespace, message, nil)
+	require.NoError(t, err)
+
+	shares, err := nodeblob.BlobsToShares(blob)
+	require.NoError(t, err)
+
+	eds, err := appda.ExtendShares(libshare.ToBytes(shares))
+	require.NoError(t, err)
+	dah, err := appda.NewDataAvailabilityHeader(eds)
+	require.NoError(t, err)
+
+	var dataRoot [32]byte
+	copy(dataRoot[:], dah.Hash())
+	certificate := cert.NewCelestiaCertificate(13, 0, uint64(len(shares)), [32]byte{0xbb}, dataRoot)
+
+	result, err := buildReadResultFromShares(
+		certificate,
+		readResultShares{
+			RowRoots:    dah.RowRoots,
+			ColumnRoots: dah.ColumnRoots,
+			Shares:      shares,
+			Rows:        [][][]byte{eds.Row(0)},
+		},
+	)
+	require.NoError(t, err)
+
+	certificate.DataRoot[0] ^= 0xff
+	err = validateReadResult(result, certificate)
+	require.ErrorContains(t, err, "data root mismatch")
+}

@@ -95,6 +95,7 @@ func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 func TestCelestiaIntegration(t *testing.T) {
 	celestiaDA, endpoint, cleanup := setupTestEnvironment(t)
 	defer cleanup()
+	hasValidatorConfig := celestiaDA.Cfg.ValidatorConfig.EthClient != "" && celestiaDA.Cfg.ValidatorConfig.BlobstreamAddr != ""
 
 	// Create RPC client
 	client, err := rpc.Dial(endpoint)
@@ -314,6 +315,103 @@ func TestCelestiaIntegration(t *testing.T) {
 		)
 		require.NoError(t, err, "recoverPayload should not depend on txCommitment")
 		require.Equal(t, message, payloadResult.Payload)
+	})
+
+	t.Run("Read Rejects Invalid Certificate Mutations", func(t *testing.T) {
+		message := make([]byte, 800)
+		copy(message, []byte("invalid certificate mutations "))
+		for i := len("invalid certificate mutations "); i < len(message); i++ {
+			message[i] = byte(i % 251)
+		}
+
+		var certBytes []byte
+		err = client.Call(&certBytes, "celestia_store", hexutil.Bytes(message))
+		require.NoError(t, err)
+		require.Len(t, certBytes, cert.CelestiaDACertV1Len)
+
+		baseCert := &cert.CelestiaDACertV1{}
+		require.NoError(t, baseCert.UnmarshalBinary(certBytes))
+
+		type mutationCase struct {
+			name             string
+			mutate           func(*cert.CelestiaDACertV1)
+			expectValidClaim *byte
+		}
+
+		invalidClaim := byte(0x00)
+		cases := []mutationCase{
+			{
+				name: "mutated_data_root",
+				mutate: func(c *cert.CelestiaDACertV1) {
+					c.DataRoot[0] ^= 0xff
+				},
+				expectValidClaim: &invalidClaim,
+			},
+			{
+				name: "zero_shares_length",
+				mutate: func(c *cert.CelestiaDACertV1) {
+					c.SharesLength = 0
+				},
+				expectValidClaim: &invalidClaim,
+			},
+			{
+				name: "out_of_bounds_start",
+				mutate: func(c *cert.CelestiaDACertV1) {
+					c.Start = ^uint64(0)
+				},
+				expectValidClaim: nil,
+			},
+		}
+
+		type PayloadResult struct {
+			Payload []byte `json:"Payload"`
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				mutated := *baseCert
+				tc.mutate(&mutated)
+
+				var readResult types.ReadResult
+				err = client.Call(&readResult, "celestia_read", &mutated)
+				require.Error(t, err, "read should reject invalid certificate mutation")
+
+				seqHeader := make([]byte, 40)
+				seqHeader[40-2] = cert.CustomDAHeaderFlag
+				seqHeader[40-1] = cert.CelestiaMessageHeaderFlag
+				mutatedCertBytes, marshalErr := mutated.MarshalBinary()
+				require.NoError(t, marshalErr)
+				seqMsg := append(seqHeader, mutatedCertBytes...)
+
+				var payloadResult PayloadResult
+				err = client.Call(
+					&payloadResult,
+					"daprovider_recoverPayload",
+					hexutil.Uint64(1),
+					common.Hash{},
+					hexutil.Bytes(seqMsg),
+				)
+				require.Error(t, err, "recoverPayload should reject invalid certificate mutation")
+
+				if tc.expectValidClaim == nil || !hasValidatorConfig {
+					return
+				}
+
+				type ValidityProofResult struct {
+					Proof hexutil.Bytes `json:"Proof"`
+				}
+				var validityResult ValidityProofResult
+				err = client.Call(
+					&validityResult,
+					"daprovider_generateCertificateValidityProof",
+					hexutil.Bytes(mutatedCertBytes),
+				)
+				require.NoError(t, err, "validity proof generation should classify invalid certs without transient error")
+				require.NotEmpty(t, validityResult.Proof)
+				require.Equal(t, *tc.expectValidClaim, validityResult.Proof[0], "claimedValid mismatch for invalid mutation")
+			})
+		}
 	})
 }
 

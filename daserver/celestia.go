@@ -1306,15 +1306,7 @@ func validateReadResult(result *types.ReadResult, certificate *cert.CelestiaDACe
 }
 
 func (c *CelestiaDA) validateCertificate(ctx context.Context, certificate *cert.CelestiaDACertV1) (bool, error) {
-	if certificate == nil {
-		return false, nil
-	}
-
-	if certificate.SharesLength == 0 {
-		return false, nil
-	}
-
-	if bytes.Equal(certificate.DataRoot[:], make([]byte, 32)) {
+	if !certificate.CanBeAttested() {
 		return false, nil
 	}
 	valid, _, err := c.generateCertificateValidityProof(ctx, certificate)
@@ -1325,13 +1317,7 @@ func (c *CelestiaDA) generateCertificateValidityProof(
 	ctx context.Context,
 	certificate *cert.CelestiaDACertV1,
 ) (bool, []byte, error) {
-	if certificate == nil {
-		return false, nil, nil
-	}
-	if certificate.SharesLength == 0 {
-		return false, nil, nil
-	}
-	if bytes.Equal(certificate.DataRoot[:], make([]byte, 32)) {
+	if !certificate.CanBeAttested() {
 		return false, nil, nil
 	}
 

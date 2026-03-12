@@ -51,7 +51,6 @@ type DaClientServer struct {
 	writer       types.Writer
 	validator    types.Validator
 	dataReceiver *data_streaming.DataStreamReceiver
-	headerBytes  []byte // supported header bytes (TODO: Cleanup)
 }
 
 type CelestiaDASRPCServer struct {
@@ -102,7 +101,6 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 		writer:       types.NewWriterForCelestia(celestiaWriter),
 		validator:    validator.NewCelestiaValidator(celestiaReader),
 		dataReceiver: dataStreamReceiver,
-		headerBytes:  []byte{cert.CustomDAHeaderFlag}, // DA API header byte is 0x01
 	}
 
 	err = rpcServer.RegisterName("daprovider", server)
@@ -284,7 +282,7 @@ func (serv *DaClientServer) Store(
 
 func (serv *DaClientServer) GetSupportedHeaderBytes(ctx context.Context) (*server_api.SupportedHeaderBytesResult, error) {
 	return &server_api.SupportedHeaderBytesResult{
-		HeaderBytes: serv.headerBytes,
+		HeaderBytes: []byte{cert.CustomDAHeaderFlag},
 	}, nil
 }
 

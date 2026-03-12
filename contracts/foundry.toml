@@ -11,7 +11,7 @@ via_ir = true
 
 [dependencies]
 "@openzeppelin-contracts" = { version = "4.9.6" }
-forge-std = { version = "1.7.6" }
+forge-std = { version = "1.15.0" }
 "@nitro-contracts" = { version = "3.2.0", url = "https://github.com/OffchainLabs/nitro-contracts/archive/refs/tags/v3.2.0.zip" }
 
 [soldeer]

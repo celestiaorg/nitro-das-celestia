@@ -83,8 +83,5 @@ jobs:
       - name: Run cert package tests
         run: go test ./daserver/cert/... -v -count=1
 
-      - name: Run validator byte-audit test (no live node needed)
-        run: go test ./daserver/... -run TestValidatorProofLayout_ByteAudit -v -count=1
-
-      - name: Build root package
-        run: go build ./...
+      - name: Run Go proof/unit tests
+        run: go test ./daserver/... -run 'Test(GenerateReadPreimageProof_.*|GenerateCertificateValidityProof_.*|BuildReadResultFromShares_.*|PayloadOffsetShareMapping|ReadChunkShareSelectionMatrix|ValidateReadResult_RejectsMutatedDataRoot)' -v -count=1

@@ -30,6 +30,23 @@ func getAuthToken(t *testing.T, network string) string {
 	return strings.TrimSpace(string(output))
 }
 
+func mustMarshalCertificate(t *testing.T, certificate *cert.CelestiaDACertV1) []byte {
+	t.Helper()
+
+	certBytes, err := certificate.MarshalBinary()
+	require.NoError(t, err)
+	return certBytes
+}
+
+func makeSequencerMessage(t *testing.T, certificate *cert.CelestiaDACertV1) []byte {
+	t.Helper()
+
+	seqHeader := make([]byte, cert.SequencerMsgOffset)
+	seqHeader[cert.SequencerMsgOffset-2] = cert.CustomDAHeaderFlag
+	seqHeader[cert.SequencerMsgOffset-1] = cert.CelestiaMessageHeaderFlag
+	return append(seqHeader, mustMarshalCertificate(t, certificate)...)
+}
+
 func setupTestEnvironment(t *testing.T) (*CelestiaDA, string, func()) {
 	// Get auth token from CLI
 	authToken := getAuthToken(t, "mocha")
@@ -295,12 +312,7 @@ func TestCelestiaIntegration(t *testing.T) {
 		require.NoError(t, err, "read should not depend on txCommitment")
 		require.Equal(t, message, readResult.Message)
 
-		seqHeader := make([]byte, 40)
-		seqHeader[40-2] = cert.CustomDAHeaderFlag
-		seqHeader[40-1] = cert.CelestiaMessageHeaderFlag
-		mutatedCertBytes, marshalErr := mutatedCert.MarshalBinary()
-		require.NoError(t, marshalErr)
-		seqMsg := append(seqHeader, mutatedCertBytes...)
+		seqMsg := makeSequencerMessage(t, mutatedCert)
 
 		type PayloadResult struct {
 			Payload []byte `json:"Payload"`
@@ -377,12 +389,8 @@ func TestCelestiaIntegration(t *testing.T) {
 				err = client.Call(&readResult, "celestia_read", &mutated)
 				require.Error(t, err, "read should reject invalid certificate mutation")
 
-				seqHeader := make([]byte, 40)
-				seqHeader[40-2] = cert.CustomDAHeaderFlag
-				seqHeader[40-1] = cert.CelestiaMessageHeaderFlag
-				mutatedCertBytes, marshalErr := mutated.MarshalBinary()
-				require.NoError(t, marshalErr)
-				seqMsg := append(seqHeader, mutatedCertBytes...)
+				mutatedCertBytes := mustMarshalCertificate(t, &mutated)
+				seqMsg := makeSequencerMessage(t, &mutated)
 
 				var payloadResult PayloadResult
 				err = client.Call(
@@ -435,12 +443,12 @@ func TestDAProviderAPI(t *testing.T) {
 
 	t.Logf("Stored cert: 0x%s", hex.EncodeToString(certBytes))
 
+	parsedCert, err := cert.ParseCelestiaCertificate(certBytes)
+	require.NoError(t, err)
+
 	// Build a synthetic sequencer message: 40-byte header + cert bytes.
 	// The daserver reads the cert starting at offset 40 (cert.SequencerMsgOffset).
-	seqHeader := make([]byte, 40)
-	seqHeader[40-2] = cert.CustomDAHeaderFlag        // byte[38]
-	seqHeader[40-1] = cert.CelestiaMessageHeaderFlag // byte[39]
-	seqMsg := append(seqHeader, certBytes...)
+	seqMsg := makeSequencerMessage(t, parsedCert)
 
 	type PayloadResult struct {
 		Payload []byte `json:"Payload"`

@@ -1,6 +1,7 @@
 package cert
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 )
@@ -54,6 +55,24 @@ func NewCelestiaCertificate(
 		TxCommitment: txCommitment,
 		DataRoot:     dataRoot,
 	}
+}
+
+func ParseCelestiaCertificate(data []byte) (*CelestiaDACertV1, error) {
+	certificate := &CelestiaDACertV1{}
+	if err := certificate.UnmarshalBinary(data); err != nil {
+		return nil, err
+	}
+	return certificate, nil
+}
+
+func (c *CelestiaDACertV1) CanBeAttested() bool {
+	if c == nil {
+		return false
+	}
+	if c.SharesLength == 0 {
+		return false
+	}
+	return !bytes.Equal(c.DataRoot[:], make([]byte, 32))
 }
 
 func (c *CelestiaDACertV1) MarshalBinary() ([]byte, error) {
@@ -121,9 +140,5 @@ func ExtractFromSequencerMessage(sequencerMsg []byte) (*CelestiaDACertV1, error)
 		return nil, ErrSequencerMsgTooShort
 	}
 
-	certificate := &CelestiaDACertV1{}
-	if err := certificate.UnmarshalBinary(sequencerMsg[SequencerMsgOffset:minLen]); err != nil {
-		return nil, err
-	}
-	return certificate, nil
+	return ParseCelestiaCertificate(sequencerMsg[SequencerMsgOffset:minLen])
 }

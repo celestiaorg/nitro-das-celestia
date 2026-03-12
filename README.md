@@ -2,6 +2,11 @@
 
 A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA ✨
 
+## Review guide
+
+For the DA API upgrade in this branch, start with the implementation guide in
+[`docs/upgrade-da-api-implementation-guide.md`](/Users/tuxcanfly/Work/nitro-das-celestia/docs/upgrade-da-api-implementation-guide.md).
+
 ## Build locally
 
 `cd cmd && go build -o celestia-server`
@@ -184,7 +189,7 @@ For negative tests that need an invalid Celestia certificate, mutate
 
 ## Testing GetProof
 
-While e2e tests excist, users might want to test and verify that the da server's `GetProof` method functions as expected, the [`blobstream_test.go`](https://github.com/celestiaorg/nitro-das-celestia/blob/main/das/blobstream_test.go) provides a way to do this.
+While e2e tests excist, users might want to test and verify that the da server's `GetProof` method functions as expected, the [`blobstream_test.go`](https://github.com/celestiaorg/nitro-das-celestia/blob/main/daserver/blobstream_test.go) provides a way to do this.
 
 There's an example `.env` file you can switch the values for, which are preconfigured to run against a Nitro x Celestia deployment on Arbitrum One (Mainnet).
 
@@ -194,4 +199,4 @@ The easiest way to run the test is to:
 - put an RPC endpoint for Arbitrum one in your `.env` file
 - run `go test -v -timeout 30s -run ^TestGetProofVerification$/^Get_Proof_e2e$`
 
-For those interested in doing their own testing, you can switch the values in the `.env` accordingly (make sure you are using the correct blobstream address for the network given in the ETH_RPC variable. All other values can be found through the celestia node cli or through the use of an explorer such as [Celenium](https://celenium.io/). If you are going to perform the test against a network other than Arbitrum One, you will need to deploy the wrapper contract around the blobstream verification library, the necessary contracts and deployment scripts can be found in the [`test`](https://github.com/celestiaorg/nitro-das-celestia/tree/main/test) folder
+For those interested in doing their own testing, you can switch the values in the `.env` accordingly (make sure you are using the correct blobstream address for the network given in the ETH_RPC variable. All other values can be found through the celestia node cli or through the use of an explorer such as [Celenium](https://celenium.io/). If you are going to perform the test against a network other than Arbitrum One, you will need to deploy the wrapper contract around the blobstream verification library, the necessary contracts and deployment assets can be found in the [`contracts`](https://github.com/celestiaorg/nitro-das-celestia/tree/main/contracts) folder

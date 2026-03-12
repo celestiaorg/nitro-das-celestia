@@ -909,40 +909,12 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	latestBlockNumber, err := ethRpc.BlockNumber(ctx)
-	if err != nil {
-		log.Warn("could not fetch latest L1 block", "err", err)
-		celestiaValidationFailureCounter.Inc(1)
-		return nil, err
-	}
-
-	// check the latest celestia block on the Blobstream contract
-	latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
-		Pending:     false,
-		BlockNumber: big.NewInt(int64(latestBlockNumber)),
-		Context:     ctx,
-	})
-	if err != nil {
-		log.Warn("could not fetch latestBlock on BlobstreamX", "err", err)
-		celestiaValidationFailureCounter.Inc(1)
-		return nil, err
-	}
-
-	fmt.Printf("Blob Pointer Height: %v\n", blobPointer.BlockHeight)
-	fmt.Printf("Latest Blobstream Height: %v\n", latestCelestiaBlock)
-
-	backwards := blobPointer.BlockHeight < latestCelestiaBlock
-
-	var event *blobstreamx.BindingsDataCommitmentStored
-
-	event, err = c.filter(ctx, ethRpc, blobstream, latestBlockNumber, blobPointer.BlockHeight, backwards)
+	event, err := c.resolveBlobstreamEvent(ctx, ethRpc, blobstream, blobPointer.BlockHeight)
 	if err != nil {
 		log.Warn("event filtering error", "err", err)
 		celestiaValidationFailureCounter.Inc(1)
 		return nil, err
 	}
-
-	// get the block data root inclusion proof to the data root tuple root
 	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(ctx, blobPointer.BlockHeight, event.StartBlock, event.EndBlock)
 	if err != nil {
 		log.Warn("could not get data root proof", "err", err)
@@ -1016,6 +988,40 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 
 	celestiaValidationFailureCounter.Inc(1)
 	return nil, err
+}
+
+func (c *CelestiaDA) resolveBlobstreamEvent(
+	ctx context.Context,
+	ethRpc *ethclient.Client,
+	blobstream *blobstreamx.Bindings,
+	celestiaHeight uint64,
+) (*blobstreamx.BindingsDataCommitmentStored, error) {
+	// Event discovery is shared across proof paths. Inclusion-proof retrieval is
+	// left to the callers because certificate-validity and share-proof generation
+	// intentionally classify those downstream errors differently.
+	latestBlockNumber, err := ethRpc.BlockNumber(ctx)
+	if err != nil {
+		log.Warn("could not fetch latest L1 block", "err", err)
+		return nil, err
+	}
+
+	latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
+		Pending:     false,
+		BlockNumber: big.NewInt(int64(latestBlockNumber)),
+		Context:     ctx,
+	})
+	if err != nil {
+		log.Warn("could not fetch latestBlock on BlobstreamX", "err", err)
+		return nil, err
+	}
+
+	backwards := celestiaHeight < latestCelestiaBlock
+	event, err := c.filter(ctx, ethRpc, blobstream, latestBlockNumber, celestiaHeight, backwards)
+	if err != nil {
+		return nil, err
+	}
+
+	return event, nil
 }
 
 func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
@@ -1362,27 +1368,7 @@ func (c *CelestiaDA) generateCertificateAttestationProof(
 		return nil, err
 	}
 
-	latestBlockNumber, err := ethRpc.BlockNumber(ctx)
-	if err != nil {
-		log.Warn("could not fetch latest L1 block", "err", err)
-		celestiaValidationFailureCounter.Inc(1)
-		return nil, err
-	}
-
-	latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
-		Pending:     false,
-		BlockNumber: big.NewInt(int64(latestBlockNumber)),
-		Context:     ctx,
-	})
-	if err != nil {
-		log.Warn("could not fetch latestBlock on BlobstreamX", "err", err)
-		celestiaValidationFailureCounter.Inc(1)
-		return nil, err
-	}
-
-	backwards := certificate.BlockHeight < latestCelestiaBlock
-
-	event, err := c.filter(ctx, ethRpc, blobstream, latestBlockNumber, certificate.BlockHeight, backwards)
+	event, err := c.resolveBlobstreamEvent(ctx, ethRpc, blobstream, certificate.BlockHeight)
 	if err != nil {
 		var validationErr *daprovider.CertificateValidationError
 		if errors.As(err, &validationErr) {
@@ -1392,7 +1378,6 @@ func (c *CelestiaDA) generateCertificateAttestationProof(
 		celestiaValidationFailureCounter.Inc(1)
 		return nil, err
 	}
-
 	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(
 		ctx, certificate.BlockHeight, event.StartBlock, event.EndBlock,
 	)
@@ -1487,38 +1472,22 @@ func (c *CelestiaDA) generateCelestiaProof(
 		return nil, err
 	}
 
-	latestBlockNumber, err := ethRpc.BlockNumber(ctx)
-	if err != nil {
-		log.Warn("could not fetch latest L1 block", "err", err)
-		celestiaValidationFailureCounter.Inc(1)
-		return nil, err
-	}
-
-	latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
-		Pending:     false,
-		BlockNumber: big.NewInt(int64(latestBlockNumber)),
-		Context:     ctx,
-	})
-	if err != nil {
-		log.Warn("could not fetch latestBlock on BlobstreamX", "err", err)
-		celestiaValidationFailureCounter.Inc(1)
-		return nil, err
-	}
-
-	backwards := certificate.BlockHeight < latestCelestiaBlock
-
-	event, err := c.filter(ctx, ethRpc, blobstream, latestBlockNumber, certificate.BlockHeight, backwards)
+	event, err := c.resolveBlobstreamEvent(ctx, ethRpc, blobstream, certificate.BlockHeight)
 	if err != nil {
 		log.Warn("event filtering error", "err", err)
 		celestiaValidationFailureCounter.Inc(1)
 		return nil, err
 	}
-
-	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(ctx, certificate.BlockHeight, event.StartBlock, event.EndBlock)
+	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(
+		ctx, certificate.BlockHeight, event.StartBlock, event.EndBlock,
+	)
 	if err != nil {
 		log.Warn("could not get data root proof", "err", err)
 		celestiaValidationFailureCounter.Inc(1)
 		return nil, err
+	}
+	if [32]byte(header.DataHash) != certificate.DataRoot {
+		return nil, certificateValidationError("header data root does not match certificate data root")
 	}
 
 	sideNodes := make([][32]byte, len((*dataRootProof).Aunts))

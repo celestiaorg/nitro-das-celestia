@@ -89,13 +89,6 @@ func StartCelestiaDASRPCServerOnListener(ctx context.Context, listener net.Liste
 	dataStreamReceiver := data_streaming.NewDefaultDataStreamReceiver(data_streaming.PayloadCommitmentVerifier())
 	dataStreamReceiver.Start(ctx)
 
-	// // NOTICE: DA VALIDATOR NOT IMPLEMENTED
-	// // Currently the server will handle any da proofs through the GetProof call established in the celestia nitro integration
-	// providerServer, err := dapserver.NewServerWithDAPProvider(ctx, nil, types.NewReaderForCelestia(celestiaReader), types.NewWriterForCelestia(celestiaWriter), nil, []byte{CelestiaMessageHeaderFlag}, data_streaming.PayloadCommitmentVerifier())
-	// if err != nil {
-	// 	return nil, err
-	// }
-
 	server := &DaClientServer{
 		reader:       types.NewReaderForCelestia(celestiaReader),
 		writer:       types.NewWriterForCelestia(celestiaWriter),
@@ -316,7 +309,6 @@ func (s *DaClientServer) CommitChunkedStore(ctx context.Context, messageId hexut
 		log.Error("Found error when trying to store chunk", "err", err)
 		return nil, err
 	}
-	log.Info("Certificate and error", "cert", serializedDACert, "err", err)
 	return &server_api.StoreResult{SerializedDACert: serializedDACert}, err
 }
 

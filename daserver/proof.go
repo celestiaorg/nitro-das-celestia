@@ -53,6 +53,88 @@ type SharesProof struct {
 	AttestationProof AttestationProof
 }
 
+type namespaceABI struct {
+	Version [1]byte
+	Id      [28]byte
+}
+
+type namespaceNodeABI struct {
+	Min    namespaceABI
+	Max    namespaceABI
+	Digest [32]byte
+}
+
+type binaryMerkleProofABI struct {
+	SideNodes [][32]byte
+	Key       *big.Int
+	NumLeaves *big.Int
+}
+
+type namespaceMerkleMultiproofABI struct {
+	BeginKey  *big.Int
+	EndKey    *big.Int
+	SideNodes []namespaceNodeABI
+}
+
+type dataRootTupleABI struct {
+	Height   *big.Int
+	DataRoot [32]byte
+}
+
+type attestationProofABI struct {
+	TupleRootNonce *big.Int
+	Tuple          dataRootTupleABI
+	Proof          binaryMerkleProofABI
+}
+
+type sharesProofABI struct {
+	Data             [][]byte
+	ShareProofs      []namespaceMerkleMultiproofABI
+	Namespace        namespaceABI
+	RowRoots         []namespaceNodeABI
+	RowProofs        []binaryMerkleProofABI
+	AttestationProof attestationProofABI
+}
+
+var (
+	namespaceABIComponents = []abi.ArgumentMarshaling{
+		{Name: "version", Type: "bytes1"},
+		{Name: "id", Type: "bytes28"},
+	}
+	namespaceNodeABIComponents = []abi.ArgumentMarshaling{
+		{Name: "min", Type: "tuple", Components: namespaceABIComponents},
+		{Name: "max", Type: "tuple", Components: namespaceABIComponents},
+		{Name: "digest", Type: "bytes32"},
+	}
+	binaryMerkleProofABIComponents = []abi.ArgumentMarshaling{
+		{Name: "sideNodes", Type: "bytes32[]"},
+		{Name: "key", Type: "uint256"},
+		{Name: "numLeaves", Type: "uint256"},
+	}
+	dataRootTupleABIComponents = []abi.ArgumentMarshaling{
+		{Name: "height", Type: "uint256"},
+		{Name: "dataRoot", Type: "bytes32"},
+	}
+	attestationProofABIComponents = []abi.ArgumentMarshaling{
+		{Name: "tupleRootNonce", Type: "uint256"},
+		{Name: "tuple", Type: "tuple", Components: dataRootTupleABIComponents},
+		{Name: "proof", Type: "tuple", Components: binaryMerkleProofABIComponents},
+	}
+	namespaceMerkleMultiproofABIComponents = []abi.ArgumentMarshaling{
+		{Name: "beginKey", Type: "uint256"},
+		{Name: "endKey", Type: "uint256"},
+		{Name: "sideNodes", Type: "tuple[]", Components: namespaceNodeABIComponents},
+	}
+	sharesProofABIComponents = []abi.ArgumentMarshaling{
+		{Name: "data", Type: "bytes[]"},
+		{Name: "shareProofs", Type: "tuple[]", Components: namespaceMerkleMultiproofABIComponents},
+		{Name: "namespace", Type: "tuple", Components: namespaceABIComponents},
+		{Name: "rowRoots", Type: "tuple[]", Components: namespaceNodeABIComponents},
+		{Name: "rowProofs", Type: "tuple[]", Components: binaryMerkleProofABIComponents},
+		{Name: "attestationProof", Type: "tuple", Components: attestationProofABIComponents},
+	}
+)
+
 func minNamespace(innerNode []byte) Namespace {
 	version := innerNode[0]
 	var id [28]byte
@@ -150,57 +232,19 @@ var sharesProofArgs = abi.Arguments{
 	},
 	{
 		Name: "sharesProof",
-		Type: mustABIType("tuple", []abi.ArgumentMarshaling{
-			{Name: "data", Type: "bytes[]"},
-			{Name: "shareProofs", Type: "tuple[]", Components: []abi.ArgumentMarshaling{
-				{Name: "beginKey", Type: "uint256"},
-				{Name: "endKey", Type: "uint256"},
-				{Name: "sideNodes", Type: "tuple[]", Components: []abi.ArgumentMarshaling{
-					{Name: "min", Type: "tuple", Components: []abi.ArgumentMarshaling{
-						{Name: "version", Type: "bytes1"},
-						{Name: "id", Type: "bytes28"},
-					}},
-					{Name: "max", Type: "tuple", Components: []abi.ArgumentMarshaling{
-						{Name: "version", Type: "bytes1"},
-						{Name: "id", Type: "bytes28"},
-					}},
-					{Name: "digest", Type: "bytes32"},
-				}},
-			}},
-			{Name: "namespace", Type: "tuple", Components: []abi.ArgumentMarshaling{
-				{Name: "version", Type: "bytes1"},
-				{Name: "id", Type: "bytes28"},
-			}},
-			{Name: "rowRoots", Type: "tuple[]", Components: []abi.ArgumentMarshaling{
-				{Name: "min", Type: "tuple", Components: []abi.ArgumentMarshaling{
-					{Name: "version", Type: "bytes1"},
-					{Name: "id", Type: "bytes28"},
-				}},
-				{Name: "max", Type: "tuple", Components: []abi.ArgumentMarshaling{
-					{Name: "version", Type: "bytes1"},
-					{Name: "id", Type: "bytes28"},
-				}},
-				{Name: "digest", Type: "bytes32"},
-			}},
-			{Name: "rowProofs", Type: "tuple[]", Components: []abi.ArgumentMarshaling{
-				{Name: "sideNodes", Type: "bytes32[]"},
-				{Name: "key", Type: "uint256"},
-				{Name: "numLeaves", Type: "uint256"},
-			}},
-			{Name: "attestationProof", Type: "tuple", Components: []abi.ArgumentMarshaling{
-				{Name: "tupleRootNonce", Type: "uint256"},
-				{Name: "tuple", Type: "tuple", Components: []abi.ArgumentMarshaling{
-					{Name: "height", Type: "uint256"},
-					{Name: "dataRoot", Type: "bytes32"},
-				}},
-				{Name: "proof", Type: "tuple", Components: []abi.ArgumentMarshaling{
-					{Name: "sideNodes", Type: "bytes32[]"},
-					{Name: "key", Type: "uint256"},
-					{Name: "numLeaves", Type: "uint256"},
-				}},
-			}},
-		}),
+		Type: mustABIType("tuple", sharesProofABIComponents),
 	},
+}
+
+var blobstreamProofArgs = abi.Arguments{
+	{Name: "_blobstream", Type: mustABIType("address", nil)},
+	{Name: "_rowRoot", Type: mustABIType("tuple", namespaceNodeABIComponents)},
+	{Name: "_rowProof", Type: mustABIType("tuple", binaryMerkleProofABIComponents)},
+	{Name: "_attestationProof", Type: mustABIType("tuple", attestationProofABIComponents)},
+}
+
+var validityProofArgs = abi.Arguments{
+	{Name: "attestationProof", Type: mustABIType("tuple", attestationProofABIComponents)},
 }
 
 func mustABIType(t string, components []abi.ArgumentMarshaling) abi.Type {
@@ -211,219 +255,96 @@ func mustABIType(t string, components []abi.ArgumentMarshaling) abi.Type {
 	return typ
 }
 
+func toNamespaceABI(ns Namespace) namespaceABI {
+	return namespaceABI{
+		Version: ns.Version,
+		Id:      ns.Id,
+	}
+}
+
+func toNamespaceNodeABI(node NamespaceNode) namespaceNodeABI {
+	return namespaceNodeABI{
+		Min:    toNamespaceABI(node.Min),
+		Max:    toNamespaceABI(node.Max),
+		Digest: node.Digest,
+	}
+}
+
+func toBinaryMerkleProofABI(proof BinaryMerkleProof) binaryMerkleProofABI {
+	return binaryMerkleProofABI{
+		SideNodes: proof.SideNodes,
+		Key:       proof.Key,
+		NumLeaves: proof.NumLeaves,
+	}
+}
+
+func toNamespaceMerkleMultiproofABI(proof NamespaceMerkleMultiproof) namespaceMerkleMultiproofABI {
+	sideNodes := make([]namespaceNodeABI, 0, len(proof.SideNodes))
+	for _, node := range proof.SideNodes {
+		sideNodes = append(sideNodes, toNamespaceNodeABI(node))
+	}
+	return namespaceMerkleMultiproofABI{
+		BeginKey:  proof.BeginKey,
+		EndKey:    proof.EndKey,
+		SideNodes: sideNodes,
+	}
+}
+
+func toDataRootTupleABI(tuple DataRootTuple) dataRootTupleABI {
+	return dataRootTupleABI{
+		Height:   tuple.Height,
+		DataRoot: tuple.DataRoot,
+	}
+}
+
+func toAttestationProofABI(proof AttestationProof) attestationProofABI {
+	return attestationProofABI{
+		TupleRootNonce: proof.TupleRootNonce,
+		Tuple:          toDataRootTupleABI(proof.Tuple),
+		Proof:          toBinaryMerkleProofABI(proof.Proof),
+	}
+}
+
+func toSharesProofABI(proof SharesProof) sharesProofABI {
+	shareProofs := make([]namespaceMerkleMultiproofABI, 0, len(proof.ShareProofs))
+	for _, shareProof := range proof.ShareProofs {
+		shareProofs = append(shareProofs, toNamespaceMerkleMultiproofABI(shareProof))
+	}
+
+	rowRoots := make([]namespaceNodeABI, 0, len(proof.RowRoots))
+	for _, rowRoot := range proof.RowRoots {
+		rowRoots = append(rowRoots, toNamespaceNodeABI(rowRoot))
+	}
+
+	rowProofs := make([]binaryMerkleProofABI, 0, len(proof.RowProofs))
+	for _, rowProof := range proof.RowProofs {
+		rowProofs = append(rowProofs, toBinaryMerkleProofABI(rowProof))
+	}
+
+	return sharesProofABI{
+		Data:             proof.Data,
+		ShareProofs:      shareProofs,
+		Namespace:        toNamespaceABI(proof.Namespace),
+		RowRoots:         rowRoots,
+		RowProofs:        rowProofs,
+		AttestationProof: toAttestationProofABI(proof.AttestationProof),
+	}
+}
+
 func packSharesProof(blobstreamAddr common.Address, sharesProof SharesProof) ([]byte, error) {
-	// The Solidity structs use fixed-size arrays for Namespace fields.
-	// abi.Arguments.Pack maps Go structs by field order, so we use anonymous structs
-	// that match the Solidity layout exactly.
-	type nsABI struct {
-		Version [1]byte
-		Id      [28]byte
-	}
-	type nsNodeABI struct {
-		Min    nsABI
-		Max    nsABI
-		Digest [32]byte
-	}
-	type rowProofABI struct {
-		SideNodes [][32]byte
-		Key       *big.Int
-		NumLeaves *big.Int
-	}
-	type multiproofABI struct {
-		BeginKey  *big.Int
-		EndKey    *big.Int
-		SideNodes []nsNodeABI
-	}
-	type dataTupleABI struct {
-		Height   *big.Int
-		DataRoot [32]byte
-	}
-	type attProofABI struct {
-		TupleRootNonce *big.Int
-		Tuple          dataTupleABI
-		Proof          rowProofABI
-	}
-	type sharesProofABI struct {
-		Data             [][]byte
-		ShareProofs      []multiproofABI
-		Namespace        nsABI
-		RowRoots         []nsNodeABI
-		RowProofs        []rowProofABI
-		AttestationProof attProofABI
-	}
-
-	shareProofs := make([]multiproofABI, 0, len(sharesProof.ShareProofs))
-	for _, sp := range sharesProof.ShareProofs {
-		sideNodes := make([]nsNodeABI, 0, len(sp.SideNodes))
-		for _, sn := range sp.SideNodes {
-			sideNodes = append(sideNodes, nsNodeABI{
-				Min:    nsABI(sn.Min),
-				Max:    nsABI(sn.Max),
-				Digest: sn.Digest,
-			})
-		}
-		shareProofs = append(shareProofs, multiproofABI{
-			BeginKey:  sp.BeginKey,
-			EndKey:    sp.EndKey,
-			SideNodes: sideNodes,
-		})
-	}
-
-	rowRoots := make([]nsNodeABI, 0, len(sharesProof.RowRoots))
-	for _, rr := range sharesProof.RowRoots {
-		rowRoots = append(rowRoots, nsNodeABI{
-			Min:    nsABI(rr.Min),
-			Max:    nsABI(rr.Max),
-			Digest: rr.Digest,
-		})
-	}
-
-	rowProofs := make([]rowProofABI, 0, len(sharesProof.RowProofs))
-	for _, rp := range sharesProof.RowProofs {
-		rowProofs = append(rowProofs, rowProofABI{
-			SideNodes: rp.SideNodes,
-			Key:       rp.Key,
-			NumLeaves: rp.NumLeaves,
-		})
-	}
-
-	return sharesProofArgs.Pack(
-		blobstreamAddr,
-		sharesProofABI{
-			Data:        sharesProof.Data,
-			ShareProofs: shareProofs,
-			Namespace: nsABI{
-				Version: sharesProof.Namespace.Version,
-				Id:      sharesProof.Namespace.Id,
-			},
-			RowRoots:  rowRoots,
-			RowProofs: rowProofs,
-			AttestationProof: attProofABI{
-				TupleRootNonce: sharesProof.AttestationProof.TupleRootNonce,
-				Tuple: dataTupleABI{
-					Height:   sharesProof.AttestationProof.Tuple.Height,
-					DataRoot: sharesProof.AttestationProof.Tuple.DataRoot,
-				},
-				Proof: rowProofABI{
-					SideNodes: sharesProof.AttestationProof.Proof.SideNodes,
-					Key:       sharesProof.AttestationProof.Proof.Key,
-					NumLeaves: sharesProof.AttestationProof.Proof.NumLeaves,
-				},
-			},
-		},
-	)
+	return sharesProofArgs.Pack(blobstreamAddr, toSharesProofABI(sharesProof))
 }
 
 // packBlobstreamProof keeps the legacy row-root-only proof packing used by GetProof.
 func packBlobstreamProof(blobstreamAddr common.Address, nsNode NamespaceNode, rowProof BinaryMerkleProof, attProof AttestationProof) ([]byte, error) {
-	args := abi.Arguments{
-		{Name: "_blobstream", Type: mustABIType("address", nil)},
-		{
-			Name: "_rowRoot",
-			Type: mustABIType("tuple", []abi.ArgumentMarshaling{
-				{Name: "min", Type: "tuple", Components: []abi.ArgumentMarshaling{{Name: "version", Type: "bytes1"}, {Name: "id", Type: "bytes28"}}},
-				{Name: "max", Type: "tuple", Components: []abi.ArgumentMarshaling{{Name: "version", Type: "bytes1"}, {Name: "id", Type: "bytes28"}}},
-				{Name: "digest", Type: "bytes32"},
-			}),
-		},
-		{
-			Name: "_rowProof",
-			Type: mustABIType("tuple", []abi.ArgumentMarshaling{
-				{Name: "sideNodes", Type: "bytes32[]"},
-				{Name: "key", Type: "uint256"},
-				{Name: "numLeaves", Type: "uint256"},
-			}),
-		},
-		{
-			Name: "_attestationProof",
-			Type: mustABIType("tuple", []abi.ArgumentMarshaling{
-				{Name: "tupleRootNonce", Type: "uint256"},
-				{Name: "tuple", Type: "tuple", Components: []abi.ArgumentMarshaling{{Name: "height", Type: "uint256"}, {Name: "dataRoot", Type: "bytes32"}}},
-				{Name: "proof", Type: "tuple", Components: []abi.ArgumentMarshaling{{Name: "sideNodes", Type: "bytes32[]"}, {Name: "key", Type: "uint256"}, {Name: "numLeaves", Type: "uint256"}}},
-			}),
-		},
-	}
-
-	type nsABI struct {
-		Version [1]byte
-		Id      [28]byte
-	}
-	type nsNodeABI struct {
-		Min    nsABI
-		Max    nsABI
-		Digest [32]byte
-	}
-	type rowProofABI struct {
-		SideNodes [][32]byte
-		Key       *big.Int
-		NumLeaves *big.Int
-	}
-	type dataTupleABI struct {
-		Height   *big.Int
-		DataRoot [32]byte
-	}
-	type attProofABI struct {
-		TupleRootNonce *big.Int
-		Tuple          dataTupleABI
-		Proof          rowProofABI
-	}
-
-	return args.Pack(
+	return blobstreamProofArgs.Pack(
 		blobstreamAddr,
-		nsNodeABI{Min: nsABI(nsNode.Min), Max: nsABI(nsNode.Max), Digest: nsNode.Digest},
-		rowProofABI{SideNodes: rowProof.SideNodes, Key: rowProof.Key, NumLeaves: rowProof.NumLeaves},
-		attProofABI{
-			TupleRootNonce: attProof.TupleRootNonce,
-			Tuple:          dataTupleABI{Height: attProof.Tuple.Height, DataRoot: attProof.Tuple.DataRoot},
-			Proof:          rowProofABI{SideNodes: attProof.Proof.SideNodes, Key: attProof.Proof.Key, NumLeaves: attProof.Proof.NumLeaves},
-		},
+		toNamespaceNodeABI(nsNode),
+		toBinaryMerkleProofABI(rowProof),
+		toAttestationProofABI(attProof),
 	)
 }
 
 func packValidityProof(attProof AttestationProof) ([]byte, error) {
-	args := abi.Arguments{
-		{
-			Name: "attestationProof",
-			Type: mustABIType("tuple", []abi.ArgumentMarshaling{
-				{Name: "tupleRootNonce", Type: "uint256"},
-				{Name: "tuple", Type: "tuple", Components: []abi.ArgumentMarshaling{
-					{Name: "height", Type: "uint256"},
-					{Name: "dataRoot", Type: "bytes32"},
-				}},
-				{Name: "proof", Type: "tuple", Components: []abi.ArgumentMarshaling{
-					{Name: "sideNodes", Type: "bytes32[]"},
-					{Name: "key", Type: "uint256"},
-					{Name: "numLeaves", Type: "uint256"},
-				}},
-			}),
-		},
-	}
-
-	type rowProofABI struct {
-		SideNodes [][32]byte
-		Key       *big.Int
-		NumLeaves *big.Int
-	}
-	type dataTupleABI struct {
-		Height   *big.Int
-		DataRoot [32]byte
-	}
-	type attProofABI struct {
-		TupleRootNonce *big.Int
-		Tuple          dataTupleABI
-		Proof          rowProofABI
-	}
-
-	return args.Pack(attProofABI{
-		TupleRootNonce: attProof.TupleRootNonce,
-		Tuple: dataTupleABI{
-			Height:   attProof.Tuple.Height,
-			DataRoot: attProof.Tuple.DataRoot,
-		},
-		Proof: rowProofABI{
-			SideNodes: attProof.Proof.SideNodes,
-			Key:       attProof.Proof.Key,
-			NumLeaves: attProof.Proof.NumLeaves,
-		},
-	})
+	return validityProofArgs.Pack(toAttestationProofABI(attProof))
 }

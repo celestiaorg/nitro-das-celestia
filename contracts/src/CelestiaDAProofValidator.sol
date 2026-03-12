@@ -257,6 +257,8 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         );
     }
 
+    // External helper so validateCertificate can use try/catch and return false,
+    // rather than revert, when the attestation payload is malformed.
     function decodeAttestationProof(bytes calldata proofData) external pure returns (AttestationProof memory) {
         return abi.decode(proofData, (AttestationProof));
     }

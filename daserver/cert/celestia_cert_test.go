@@ -1,6 +1,7 @@
 package cert
 
 import (
+	"bytes"
 	"encoding/hex"
 	"testing"
 )
@@ -132,5 +133,78 @@ func TestExtractFromSequencerMessage(t *testing.T) {
 	}
 	if parsed.DataRoot != dataRoot {
 		t.Fatalf("data root mismatch")
+	}
+}
+
+func TestCelestiaDACertV1_CanBeAttested(t *testing.T) {
+	t.Parallel()
+
+	validDataRoot := [32]byte{0x01}
+
+	tests := []struct {
+		name string
+		cert *CelestiaDACertV1
+		want bool
+	}{
+		{
+			name: "nil",
+			cert: nil,
+			want: false,
+		},
+		{
+			name: "zero_shares_length",
+			cert: &CelestiaDACertV1{
+				DataRoot: validDataRoot,
+			},
+			want: false,
+		},
+		{
+			name: "zero_data_root",
+			cert: &CelestiaDACertV1{
+				SharesLength: 1,
+			},
+			want: false,
+		},
+		{
+			name: "valid",
+			cert: &CelestiaDACertV1{
+				SharesLength: 1,
+				DataRoot:     validDataRoot,
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cert.CanBeAttested(); got != tt.want {
+				t.Fatalf("CanBeAttested() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCelestiaCertificate(t *testing.T) {
+	t.Parallel()
+
+	original := &CelestiaDACertV1{
+		BlockHeight:  77,
+		Start:        11,
+		SharesLength: 22,
+		TxCommitment: [32]byte{0xaa},
+		DataRoot:     [32]byte{0xbb},
+	}
+	data, err := original.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary failed: %v", err)
+	}
+
+	parsed, err := ParseCelestiaCertificate(data)
+	if err != nil {
+		t.Fatalf("ParseCelestiaCertificate failed: %v", err)
+	}
+	if !bytes.Equal(parsed.TxCommitment[:], original.TxCommitment[:]) || !bytes.Equal(parsed.DataRoot[:], original.DataRoot[:]) ||
+		parsed.BlockHeight != original.BlockHeight || parsed.Start != original.Start || parsed.SharesLength != original.SharesLength {
+		t.Fatalf("parsed certificate mismatch: got %+v want %+v", parsed, original)
 	}
 }

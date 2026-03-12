@@ -8,6 +8,7 @@ import (
 	nodeblob "github.com/celestiaorg/celestia-node/blob"
 	libshare "github.com/celestiaorg/go-square/v3/share"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
+	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -116,4 +117,11 @@ func TestValidateReadResult_RejectsMutatedDataRoot(t *testing.T) {
 	certificate.DataRoot[0] ^= 0xff
 	err = validateReadResult(result, certificate)
 	require.ErrorContains(t, err, "data root mismatch")
+}
+
+func TestValidateReadResult_RejectsNilCertificate(t *testing.T) {
+	t.Parallel()
+
+	err := validateReadResult(&types.ReadResult{}, nil)
+	require.ErrorContains(t, err, "nil certificate")
 }

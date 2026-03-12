@@ -53,88 +53,95 @@ contract CelestiaDAProofValidatorTest is Test {
         mockBlobstream.submitDataCommitment(commitment, 0, certHeight + 1);
     }
 
-    function test_validateCertificate_valid_claimed1() public {
+    function test_validateCertificate_valid_claimed1() public view {
         bytes memory proof = _buildValidityProof(validCert, _attestationProof(certHeight, certDataRoot), bytes1(0x01));
         assertTrue(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_valid_claimed0_returnsFalse() public {
+    function test_validateCertificate_valid_claimed0_returnsFalse() public view {
         bytes memory proof = abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x00), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_invalidStructure_claimed1_returnsFalse() public {
+    function test_validateCertificate_invalidStructure_claimed1_returnsFalse() public view {
         bytes memory badCert = bytes(validCert);
         badCert[0] = 0x00;
         bytes memory proof = abi.encodePacked(uint64(badCert.length), badCert, bytes1(0x01), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_badClaimedValidByteIgnoredWhenAttested() public {
+    function test_validateCertificate_badClaimedValidByteIgnoredWhenAttested() public view {
         bytes memory proof = _buildValidityProof(validCert, _attestationProof(certHeight, certDataRoot), bytes1(0x00));
         assertTrue(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_wrongValidityVersion_returnsFalse() public {
+    function test_validateCertificate_wrongValidityVersion_returnsFalse() public view {
         bytes memory proof = abi.encodePacked(
-            uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x02), abi.encode(_attestationProof(certHeight, certDataRoot))
+            uint64(validCert.length),
+            validCert,
+            bytes1(0x01),
+            bytes1(0x02),
+            abi.encode(_attestationProof(certHeight, certDataRoot))
         );
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_missingAttestationPayload_returnsFalse() public {
+    function test_validateCertificate_missingAttestationPayload_returnsFalse() public view {
         bytes memory proof = abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_malformedAttestationPayload_returnsFalse() public {
-        bytes memory proof = abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x01), hex"deadbeef");
+    function test_validateCertificate_malformedAttestationPayload_returnsFalse() public view {
+        bytes memory proof =
+            abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x01), hex"deadbeef");
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_wrongTupleHeight_returnsFalse() public {
-        bytes memory proof = _buildValidityProof(validCert, _attestationProof(certHeight + 1, certDataRoot), bytes1(0x01));
+    function test_validateCertificate_wrongTupleHeight_returnsFalse() public view {
+        bytes memory proof =
+            _buildValidityProof(validCert, _attestationProof(certHeight + 1, certDataRoot), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_wrongTupleDataRoot_returnsFalse() public {
+    function test_validateCertificate_wrongTupleDataRoot_returnsFalse() public view {
         bytes32 badDataRoot = bytes32(uint256(certDataRoot) ^ uint256(1));
         bytes memory proof = _buildValidityProof(validCert, _attestationProof(certHeight, badDataRoot), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_wrongProofNonce_returnsFalse() public {
+    function test_validateCertificate_wrongProofNonce_returnsFalse() public view {
         AttestationProof memory attestationProof = _attestationProof(certHeight, certDataRoot);
         attestationProof.tupleRootNonce = 999;
         bytes memory proof = _buildValidityProof(validCert, attestationProof, bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_zeroBlockHeight_returnsFalse() public {
+    function test_validateCertificate_zeroBlockHeight_returnsFalse() public view {
         bytes memory badCert = _buildCert(0, certStart, certSharesLength, keccak256("tx-commitment"), certDataRoot);
         bytes memory proof = _buildValidityProof(badCert, _attestationProof(certHeight, certDataRoot), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_zeroSharesLength_returnsFalse() public {
+    function test_validateCertificate_zeroSharesLength_returnsFalse() public view {
         bytes memory badCert = _buildCert(certHeight, certStart, 0, keccak256("tx-commitment"), certDataRoot);
         bytes memory proof = _buildValidityProof(badCert, _attestationProof(certHeight, certDataRoot), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_zeroTxCommitment_returnsFalse() public {
+    function test_validateCertificate_zeroTxCommitment_returnsFalse() public view {
         bytes memory badCert = _buildCert(certHeight, certStart, certSharesLength, bytes32(0), certDataRoot);
         bytes memory proof = _buildValidityProof(badCert, _attestationProof(certHeight, certDataRoot), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateCertificate_zeroDataRoot_returnsFalse() public {
-        bytes memory badCert = _buildCert(certHeight, certStart, certSharesLength, keccak256("tx-commitment"), bytes32(0));
+    function test_validateCertificate_zeroDataRoot_returnsFalse() public view {
+        bytes memory badCert =
+            _buildCert(certHeight, certStart, certSharesLength, keccak256("tx-commitment"), bytes32(0));
         bytes memory proof = _buildValidityProof(badCert, _attestationProof(certHeight, certDataRoot), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
-    function test_validateReadPreimage_singleShareChunk() public {
+    function test_validateReadPreimage_singleShareChunk() public view {
         uint64 offset = 0;
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         bytes memory out = validator.validateReadPreimage(keccak256(validCert), offset, proof);
@@ -145,7 +152,7 @@ contract CelestiaDAProofValidatorTest is Test {
         }
     }
 
-    function test_validateReadPreimage_crossShareChunk() public {
+    function test_validateReadPreimage_crossShareChunk() public view {
         uint64 offset = 448;
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         bytes memory out = validator.validateReadPreimage(keccak256(validCert), offset, proof);
@@ -156,7 +163,7 @@ contract CelestiaDAProofValidatorTest is Test {
         }
     }
 
-    function test_validateReadPreimage_continuationShareChunk() public {
+    function test_validateReadPreimage_continuationShareChunk() public view {
         uint64 offset = 480;
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         bytes memory out = validator.validateReadPreimage(keccak256(validCert), offset, proof);
@@ -172,6 +179,16 @@ contract CelestiaDAProofValidatorTest is Test {
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
         vm.expectRevert("Certificate hash mismatch");
         validator.validateReadPreimage(keccak256("wrong"), offset, proof);
+    }
+
+    function test_validateReadPreimage_wrongBlobstreamAddress_reverts() public {
+        uint64 offset = 64;
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
+        uint256 proofStart = 8 + validCert.length;
+        uint256 blobstreamAddrOffset = proofStart + 27 + 12;
+        proof[blobstreamAddrOffset] = bytes1(uint8(proof[blobstreamAddrOffset]) ^ 0x01);
+        vm.expectRevert("Blobstream address mismatch");
+        validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
 
     function test_validateReadPreimage_badSharesProof_reverts() public {
@@ -235,8 +252,9 @@ contract CelestiaDAProofValidatorTest is Test {
 
     function test_validateReadPreimage_wrongTupleHeight_reverts() public {
         uint64 offset = 64;
-        bytes memory proof =
-            _buildReadProofWithTuple(offset, uint64(payload.length), certHeight + 1, certDataRoot, false, false, type(uint8).max);
+        bytes memory proof = _buildReadProofWithTuple(
+            offset, uint64(payload.length), certHeight + 1, certDataRoot, false, false, type(uint8).max
+        );
         vm.expectRevert("Shares proof height does not match certificate blockHeight");
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
@@ -244,8 +262,9 @@ contract CelestiaDAProofValidatorTest is Test {
     function test_validateReadPreimage_wrongTupleDataRoot_reverts() public {
         uint64 offset = 64;
         bytes32 badDataRoot = bytes32(uint256(certDataRoot) ^ uint256(1));
-        bytes memory proof =
-            _buildReadProofWithTuple(offset, uint64(payload.length), certHeight, badDataRoot, false, false, type(uint8).max);
+        bytes memory proof = _buildReadProofWithTuple(
+            offset, uint64(payload.length), certHeight, badDataRoot, false, false, type(uint8).max
+        );
         vm.expectRevert("Shares proof dataRoot does not match certificate dataRoot");
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
@@ -262,7 +281,9 @@ contract CelestiaDAProofValidatorTest is Test {
         view
         returns (bytes memory)
     {
-        return _buildReadProofWithTuple(offset, payloadSize, certHeight, certDataRoot, tamperProof, badIndex, type(uint8).max);
+        return _buildReadProofWithTuple(
+            offset, payloadSize, certHeight, certDataRoot, tamperProof, badIndex, type(uint8).max
+        );
     }
 
     function _buildReadProofWithForcedShareCount(uint64 offset, uint64 payloadSize, uint8 forcedShareCount)
@@ -409,12 +430,14 @@ contract CelestiaDAProofValidatorTest is Test {
         return abi.encodePacked(bytes8(uint64(validCert.length)), validCert, custom);
     }
 
-    function _buildValidityProof(bytes memory certificate, AttestationProof memory attestationProof, bytes1 claimedValid)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        return abi.encodePacked(uint64(certificate.length), certificate, claimedValid, bytes1(0x01), abi.encode(attestationProof));
+    function _buildValidityProof(
+        bytes memory certificate,
+        AttestationProof memory attestationProof,
+        bytes1 claimedValid
+    ) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            uint64(certificate.length), certificate, claimedValid, bytes1(0x01), abi.encode(attestationProof)
+        );
     }
 
     function _attestationProof(uint64 height, bytes32 dataRoot) internal pure returns (AttestationProof memory) {

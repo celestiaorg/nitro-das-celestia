@@ -34,9 +34,9 @@ on:
         required: false
         default: release
       das_image:
-          description: "Celestia DA server image"
-          required: false
-          default: ghcr.io/celestiaorg/nitro-das-celestia:latest
+        description: "Celestia DA server image"
+        required: false
+        default: ghcr.io/celestiaorg/nitro-das-celestia:latest
       rpc_skip_auth:
         description: "Disable Celestia RPC auth"
         required: true

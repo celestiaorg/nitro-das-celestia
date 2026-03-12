@@ -146,7 +146,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
 
         (address encodedBlobstream, SharesProof memory sharesProof) =
             abi.decode(sharesProofData, (address, SharesProof));
-        encodedBlobstream;
+        require(encodedBlobstream == blobstreamX, "Blobstream address mismatch");
 
         require(
             sharesProof.attestationProof.tuple.height == certHeight,

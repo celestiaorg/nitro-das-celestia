@@ -1,7 +1,6 @@
 package cert
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 )
@@ -72,7 +71,7 @@ func (c *CelestiaDACertV1) CanBeAttested() bool {
 	if c.SharesLength == 0 {
 		return false
 	}
-	return !bytes.Equal(c.DataRoot[:], make([]byte, 32))
+	return c.DataRoot != [32]byte{}
 }
 
 func (c *CelestiaDACertV1) MarshalBinary() ([]byte, error) {

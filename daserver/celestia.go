@@ -1261,6 +1261,9 @@ func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certi
 }
 
 func validateReadResult(result *types.ReadResult, certificate *cert.CelestiaDACertV1) error {
+	if certificate == nil {
+		return fmt.Errorf("nil certificate")
+	}
 	if result.SquareSize == 0 {
 		return fmt.Errorf("invalid square size")
 	}

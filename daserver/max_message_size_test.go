@@ -106,3 +106,44 @@ func TestMaxMessageSize_ReadsConfiguredProofValidator(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int(want.Int64()), maxSize)
 }
+
+func TestMaxMessageSize_FallsBackOnZeroReturnValue(t *testing.T) {
+	t.Parallel()
+
+	server := newETHRPCServer(t, big.NewInt(0))
+	defer server.Close()
+
+	da := &CelestiaDA{
+		Cfg: &DAConfig{
+			ValidatorConfig: ValidatorConfig{
+				EthClient:          server.URL,
+				ProofValidatorAddr: "0x00000000000000000000000000000000000000AA",
+			},
+		},
+	}
+
+	maxSize, err := da.MaxMessageSize(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, celestiaDefaultMaxBytes, maxSize)
+}
+
+func TestMaxMessageSize_FallsBackOnTooLargeReturnValue(t *testing.T) {
+	t.Parallel()
+
+	huge := new(big.Int).Lsh(big.NewInt(1), 100)
+	server := newETHRPCServer(t, huge)
+	defer server.Close()
+
+	da := &CelestiaDA{
+		Cfg: &DAConfig{
+			ValidatorConfig: ValidatorConfig{
+				EthClient:          server.URL,
+				ProofValidatorAddr: "0x00000000000000000000000000000000000000AA",
+			},
+		},
+	}
+
+	maxSize, err := da.MaxMessageSize(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, celestiaDefaultMaxBytes, maxSize)
+}

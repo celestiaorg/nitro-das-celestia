@@ -180,6 +180,48 @@ func TestRecoverPayloadFromCelestiaBatch_ReadError(t *testing.T) {
 	require.ErrorContains(t, err, "boom")
 }
 
+func TestRecoverPayloadFromCelestiaBatch_CertificateValidationErrorPropagates(t *testing.T) {
+	t.Parallel()
+
+	certificate, _ := makeValidReadFixture(t, []byte("payload"))
+	readErr := &daprovider.CertificateValidationError{Reason: "certificate validation failed: untrusted signer"}
+	reader := &fakeReader{readErr: readErr}
+
+	_, _, err := RecoverPayloadFromCelestiaBatch(
+		context.Background(),
+		1,
+		makeSequencerMessage(t, certificate),
+		reader,
+		false,
+	)
+	require.ErrorIs(t, err, readErr)
+	require.True(t, daprovider.IsCertificateValidationError(err))
+}
+
+func TestReaderForCelestia_RecoverPayload_PreservesCertificateValidationError(t *testing.T) {
+	t.Parallel()
+
+	certificate, _ := makeValidReadFixture(t, []byte("payload"))
+	readErr := &daprovider.CertificateValidationError{Reason: "certificate validation failed: bad signature"}
+	reader := NewReaderForCelestia(&fakeReader{readErr: readErr})
+
+	_, err := reader.RecoverPayload(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
+	require.ErrorIs(t, err, readErr)
+	require.True(t, daprovider.IsCertificateValidationError(err))
+}
+
+func TestReaderForCelestia_RecoverPayload_PropagatesInfrastructureError(t *testing.T) {
+	t.Parallel()
+
+	certificate, _ := makeValidReadFixture(t, []byte("payload"))
+	readErr := errors.New("storage unavailable: database connection timeout")
+	reader := NewReaderForCelestia(&fakeReader{readErr: readErr})
+
+	_, err := reader.RecoverPayload(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
+	require.ErrorIs(t, err, readErr)
+	require.False(t, daprovider.IsCertificateValidationError(err))
+}
+
 func TestRecoverPayloadFromCelestiaBatch_EmptyPayload(t *testing.T) {
 	t.Parallel()
 
@@ -195,6 +237,18 @@ func TestRecoverPayloadFromCelestiaBatch_EmptyPayload(t *testing.T) {
 		false,
 	)
 	require.ErrorContains(t, err, "empty payload")
+}
+
+func TestReaderForCelestia_RecoverPayload_EmptyBatchReturnsSuccess(t *testing.T) {
+	t.Parallel()
+
+	certificate, result := makeValidReadFixture(t, []byte("payload"))
+	result.Message = []byte{}
+	reader := NewReaderForCelestia(&fakeReader{readResult: result})
+
+	res, err := reader.RecoverPayload(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, res.Payload)
 }
 
 func TestRecoverPayloadFromCelestiaBatch_RowRootMismatch(t *testing.T) {
@@ -255,4 +309,89 @@ func TestReaderForCelestia_CollectPreimages(t *testing.T) {
 	res, err := reader.CollectPreimages(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, res.Preimages)
+}
+
+func TestReaderForCelestia_CollectPreimages_PreservesCertificateValidationError(t *testing.T) {
+	t.Parallel()
+
+	certificate, _ := makeValidReadFixture(t, []byte("payload"))
+	readErr := &daprovider.CertificateValidationError{Reason: "certificate validation failed: malformed certificate"}
+	reader := NewReaderForCelestia(&fakeReader{readErr: readErr})
+
+	_, err := reader.CollectPreimages(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
+	require.ErrorIs(t, err, readErr)
+	require.True(t, daprovider.IsCertificateValidationError(err))
+}
+
+func TestReaderForCelestia_CollectPreimages_PropagatesInfrastructureError(t *testing.T) {
+	t.Parallel()
+
+	certificate, _ := makeValidReadFixture(t, []byte("payload"))
+	readErr := errors.New("rpc timeout fetching batch data")
+	reader := NewReaderForCelestia(&fakeReader{readErr: readErr})
+
+	_, err := reader.CollectPreimages(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
+	require.ErrorIs(t, err, readErr)
+	require.False(t, daprovider.IsCertificateValidationError(err))
+}
+
+func TestReaderForCelestia_CollectPreimages_EmptyBatchReturnsSuccess(t *testing.T) {
+	t.Parallel()
+
+	certificate, result := makeValidReadFixture(t, []byte("payload"))
+	result.Message = []byte{}
+	reader := NewReaderForCelestia(&fakeReader{readResult: result})
+
+	res, err := reader.CollectPreimages(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, res.Preimages)
+
+	certBytes, marshalErr := certificate.MarshalBinary()
+	require.NoError(t, marshalErr)
+	certHash := crypto.Keccak256Hash(certBytes)
+	require.Contains(t, res.Preimages[arbutil.DACertificatePreimageType], certHash)
+	require.Empty(t, res.Preimages[arbutil.DACertificatePreimageType][certHash])
+}
+
+func TestReaderForCelestia_RecoverPayloadAndPreimages_PreservesCertificateValidationError(t *testing.T) {
+	t.Parallel()
+
+	certificate, _ := makeValidReadFixture(t, []byte("payload"))
+	readErr := &daprovider.CertificateValidationError{Reason: "certificate validation failed: bad signature"}
+	reader := NewReaderForCelestia(&fakeReader{readErr: readErr})
+
+	_, err := reader.RecoverPayloadAndPreimages(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
+	require.ErrorIs(t, err, readErr)
+	require.True(t, daprovider.IsCertificateValidationError(err))
+}
+
+func TestReaderForCelestia_RecoverPayloadAndPreimages_PropagatesInfrastructureError(t *testing.T) {
+	t.Parallel()
+
+	certificate, _ := makeValidReadFixture(t, []byte("payload"))
+	readErr := errors.New("storage unavailable: backend offline")
+	reader := NewReaderForCelestia(&fakeReader{readErr: readErr})
+
+	_, err := reader.RecoverPayloadAndPreimages(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
+	require.ErrorIs(t, err, readErr)
+	require.False(t, daprovider.IsCertificateValidationError(err))
+}
+
+func TestReaderForCelestia_RecoverPayloadAndPreimages_EmptyBatchReturnsSuccess(t *testing.T) {
+	t.Parallel()
+
+	certificate, result := makeValidReadFixture(t, []byte("payload"))
+	result.Message = []byte{}
+	reader := NewReaderForCelestia(&fakeReader{readResult: result})
+
+	res, err := reader.RecoverPayloadAndPreimages(1, common.Hash{}, makeSequencerMessage(t, certificate)).Await(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, res.Payload)
+	require.NotNil(t, res.Preimages)
+
+	certBytes, marshalErr := certificate.MarshalBinary()
+	require.NoError(t, marshalErr)
+	certHash := crypto.Keccak256Hash(certBytes)
+	require.Contains(t, res.Preimages[arbutil.DACertificatePreimageType], certHash)
+	require.Empty(t, res.Preimages[arbutil.DACertificatePreimageType][certHash])
 }

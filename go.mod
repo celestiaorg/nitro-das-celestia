@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/celestiaorg/aws-kms-keyring v0.4.0
 	github.com/celestiaorg/celestia-app/v6 v6.4.10
+	github.com/celestiaorg/celestia-app/v7 v7.0.2-mocha
 	github.com/celestiaorg/celestia-node v0.29.1-mocha
 	github.com/celestiaorg/go-square/v3 v3.0.2
 	github.com/cometbft/cometbft v0.38.17
@@ -58,7 +59,6 @@ require (
 	github.com/aws/smithy-go v1.24.0 // indirect
 	github.com/bcp-innovations/hyperlane-cosmos v1.1.0 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/celestiaorg/celestia-app/v7 v7.0.2-mocha // indirect
 	github.com/celestiaorg/go-square/v2 v2.3.3 // indirect
 	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
 	github.com/cockroachdb/fifo v0.0.0-20240816210425-c5d0cb0b6fc0 // indirect
@@ -142,7 +142,7 @@ require (
 	github.com/bgentry/speakeasy v0.2.0 // indirect
 	github.com/bits-and-blooms/bitset v1.24.0 // indirect
 	github.com/celestiaorg/go-fraud v0.2.3 // indirect
-	github.com/celestiaorg/go-header v0.7.3 // indirect
+	github.com/celestiaorg/go-header v0.7.3
 	github.com/celestiaorg/go-libp2p-messenger v0.2.2 // indirect
 	github.com/celestiaorg/go-square/merkle v0.0.0-20240429192549-dea967e1533b // indirect
 	github.com/celestiaorg/merkletree v0.0.0-20230308153949-c33506a7aa26 // indirect

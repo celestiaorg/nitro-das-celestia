@@ -1130,3 +1130,19 @@ func TestGenerateReadPreimageProof_OffsetOutOfBoundsReturnsError(t *testing.T) {
 	_, err := fixture.celestiaDA.GenerateReadPreimageProof(context.Background(), 32, fixture.certificate)
 	require.ErrorContains(t, err, "offset out of bounds")
 }
+
+func TestGenerateReadPreimageProof_OffsetAtPayloadEndReturnsZeroLengthChunkProof(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReadPreimageFixtureWithMessage(t, bytes.Repeat([]byte{0x5A}, 32))
+
+	proof, err := fixture.celestiaDA.GenerateReadPreimageProof(context.Background(), 32, fixture.certificate)
+	require.NoError(t, err)
+	require.Greater(t, len(proof), 27)
+	require.Equal(t, byte(0x01), proof[0])
+	require.EqualValues(t, 32, binary.BigEndian.Uint64(proof[1:9]))
+	require.EqualValues(t, 32, binary.BigEndian.Uint64(proof[9:17]))
+	require.Equal(t, byte(0), proof[17])
+	require.EqualValues(t, fixture.certificate.Start, binary.BigEndian.Uint64(proof[18:26]))
+	require.Equal(t, byte(1), proof[26])
+}

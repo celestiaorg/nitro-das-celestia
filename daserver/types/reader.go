@@ -150,10 +150,6 @@ func RecoverPayloadFromCelestiaBatch(
 		return nil, nil, err
 	}
 
-	if len(result.Message) == 0 {
-		return nil, nil, errors.New("empty payload returned from Celestia")
-	}
-
 	if preimageRecorder != nil {
 		certBytes, err := certificate.MarshalBinary()
 		if err != nil {

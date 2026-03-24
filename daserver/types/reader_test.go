@@ -222,21 +222,23 @@ func TestReaderForCelestia_RecoverPayload_PropagatesInfrastructureError(t *testi
 	require.False(t, daprovider.IsCertificateValidationError(err))
 }
 
-func TestRecoverPayloadFromCelestiaBatch_EmptyPayload(t *testing.T) {
+func TestRecoverPayloadFromCelestiaBatch_EmptyPayloadReturnsSuccess(t *testing.T) {
 	t.Parallel()
 
 	certificate, result := makeValidReadFixture(t, []byte("payload"))
 	result.Message = nil
 	reader := &fakeReader{readResult: result}
 
-	_, _, err := RecoverPayloadFromCelestiaBatch(
+	payload, preimages, err := RecoverPayloadFromCelestiaBatch(
 		context.Background(),
 		1,
 		makeSequencerMessage(t, certificate),
 		reader,
 		false,
 	)
-	require.ErrorContains(t, err, "empty payload")
+	require.NoError(t, err)
+	require.Nil(t, payload)
+	require.Nil(t, preimages)
 }
 
 func TestReaderForCelestia_RecoverPayload_EmptyBatchReturnsSuccess(t *testing.T) {

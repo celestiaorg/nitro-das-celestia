@@ -1103,9 +1103,6 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 	if err != nil {
 		return nil, err
 	}
-	if len(readResult.Message) == 0 {
-		return nil, errors.New("empty payload returned from celestia")
-	}
 
 	if err := validateReadResult(readResult, certificate); err != nil {
 		return nil, err

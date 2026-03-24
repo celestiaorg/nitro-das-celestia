@@ -579,7 +579,7 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 		return nil, err
 	}
 
-	if dataBlob.Index() <= 0 {
+	if dataBlob.Index() < 0 {
 		celestiaFailureCounter.Inc(1)
 		log.Warn("Unexpected index from blob response", "index", dataBlob.Index())
 		return nil, errors.New("unexpected response code")

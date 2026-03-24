@@ -70,6 +70,30 @@ contract CelestiaDAProofValidatorTest is Test {
         assertFalse(validator.validateCertificate(proof));
     }
 
+    function test_validateCertificate_wrongProviderTag_claimed1_returnsFalse() public view {
+        bytes memory badCert = bytes(validCert);
+        badCert[1] = 0x00;
+        bytes memory proof = abi.encodePacked(uint64(badCert.length), badCert, bytes1(0x01), bytes1(0x01));
+        assertFalse(validator.validateCertificate(proof));
+    }
+
+    function test_validateCertificate_unsupportedCertVersion_claimed1_returnsFalse() public view {
+        bytes memory badCert = bytes(validCert);
+        badCert[2] = 0x00;
+        badCert[3] = 0x02;
+        bytes memory proof = abi.encodePacked(uint64(badCert.length), badCert, bytes1(0x01), bytes1(0x01));
+        assertFalse(validator.validateCertificate(proof));
+    }
+
+    function test_validateCertificate_truncatedCertificate_returnsFalse() public view {
+        bytes memory truncatedCert = new bytes(validCert.length - 1);
+        for (uint256 i = 0; i < truncatedCert.length; i++) {
+            truncatedCert[i] = validCert[i];
+        }
+        bytes memory proof = abi.encodePacked(uint64(truncatedCert.length), truncatedCert, bytes1(0x01), bytes1(0x01));
+        assertFalse(validator.validateCertificate(proof));
+    }
+
     function test_validateCertificate_badClaimedValidByteIgnoredWhenAttested() public view {
         bytes memory proof = _buildValidityProof(validCert, _attestationProof(certHeight, certDataRoot), bytes1(0x00));
         assertTrue(validator.validateCertificate(proof));

@@ -53,7 +53,6 @@ Expected behavior:
 
 Important:
 
-- Empty payloads are currently treated as errors in `daserver/types/reader.go`. That is a known spec gap, and tests were added intentionally to catch it.
 - Preserve exact error classification. Do not collapse validation failures into generic errors.
 
 ## Validator Rules
@@ -119,8 +118,7 @@ Bias toward fixing code, not lowering the test bar.
 
 As of the latest test work in this repo, the main spec gaps are:
 
-- reader empty-batch handling still errors instead of succeeding
-- no Blobstream event is still surfaced as timeout/error in some paths instead of invalid certificate
-- uncommitted height is still surfaced as timeout/error in some paths instead of invalid certificate
+- onchain invalid-certificate coverage could still be broadened further if more Go-side invalid-cert classes are mirrored explicitly in Solidity tests
+- end-to-end Nitro BOLD/custom-DA challenge coverage against the real provider is still pending
 
-These gaps are intentional test targets. Do not remove or soften the tests covering them unless the spec itself changes.
+Do not remove or soften tests that cover these areas unless the spec itself changes.

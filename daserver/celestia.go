@@ -909,11 +909,14 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	event, err := c.resolveBlobstreamEvent(ctx, ethRpc, blobstream, blobPointer.BlockHeight)
+	event, found, err := c.findBlobstreamCommitmentEvent(ctx, ethRpc, blobstream, blobPointer.BlockHeight)
 	if err != nil {
 		log.Warn("event filtering error", "err", err)
 		celestiaValidationFailureCounter.Inc(1)
 		return nil, err
+	}
+	if !found {
+		return nil, certificateValidationError("missing blobstream commitment")
 	}
 	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(ctx, blobPointer.BlockHeight, event.StartBlock, event.EndBlock)
 	if err != nil {
@@ -990,19 +993,19 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	return nil, err
 }
 
-func (c *CelestiaDA) resolveBlobstreamEvent(
+func (c *CelestiaDA) findBlobstreamCommitmentEvent(
 	ctx context.Context,
 	ethRpc *ethclient.Client,
 	blobstream *blobstreamx.Bindings,
 	celestiaHeight uint64,
-) (*blobstreamx.BindingsDataCommitmentStored, error) {
+) (*blobstreamx.BindingsDataCommitmentStored, bool, error) {
 	// Event discovery is shared across proof paths. Inclusion-proof retrieval is
 	// left to the callers because certificate-validity and share-proof generation
 	// intentionally classify those downstream errors differently.
 	latestBlockNumber, err := ethRpc.BlockNumber(ctx)
 	if err != nil {
 		log.Warn("could not fetch latest L1 block", "err", err)
-		return nil, err
+		return nil, false, err
 	}
 
 	latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
@@ -1012,32 +1015,40 @@ func (c *CelestiaDA) resolveBlobstreamEvent(
 	})
 	if err != nil {
 		log.Warn("could not fetch latestBlock on BlobstreamX", "err", err)
-		return nil, err
+		return nil, false, err
 	}
 
-	backwards := celestiaHeight < latestCelestiaBlock
-	event, err := c.filter(ctx, ethRpc, blobstream, latestBlockNumber, celestiaHeight, backwards)
+	if celestiaHeight >= latestCelestiaBlock {
+		return nil, false, nil
+	}
+
+	event, err := c.filterBlobstreamCommitmentEvents(ctx, blobstream, latestBlockNumber, celestiaHeight)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	return event, nil
+	return event, event != nil, nil
 }
 
-func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
-	blobstream *blobstreamx.Bindings, latestBlock uint64, celestiaHeight uint64, backwards bool) (*blobstreamx.BindingsDataCommitmentStored, error) {
+func (c *CelestiaDA) filterBlobstreamCommitmentEvents(
+	ctx context.Context,
+	blobstream *blobstreamx.Bindings,
+	latestBlock uint64,
+	celestiaHeight uint64,
+) (*blobstreamx.BindingsDataCommitmentStored, error) {
 	// Geth has a default of 5000 block limit for filters
-	start := uint64(0)
-	if latestBlock > 5000 {
-		start = latestBlock - 5000
-	}
 	end := latestBlock
 
 	for {
-		// Check context before each iteration
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("context cancelled or deadline exceeded: %w", err)
+			return nil, err
 		}
+
+		start := uint64(0)
+		if end > 5000 {
+			start = end - 5000
+		}
+
 		eventsIterator, err := blobstream.FilterDataCommitmentStored(
 			&bind.FilterOpts{
 				Context: ctx,
@@ -1053,17 +1064,16 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 			return nil, err
 		}
 
-		var event *blobstreamx.BindingsDataCommitmentStored
+		var match *blobstreamx.BindingsDataCommitmentStored
 		for eventsIterator.Next() {
 			e := eventsIterator.Event
 			if e.StartBlock <= celestiaHeight && celestiaHeight < e.EndBlock {
-				event = &blobstreamx.BindingsDataCommitmentStored{
+				match = &blobstreamx.BindingsDataCommitmentStored{
 					ProofNonce:     e.ProofNonce,
 					StartBlock:     e.StartBlock,
 					EndBlock:       e.EndBlock,
 					DataCommitment: e.DataCommitment,
 				}
-				break
 			}
 		}
 		if err := eventsIterator.Error(); err != nil {
@@ -1073,38 +1083,15 @@ func (c *CelestiaDA) filter(ctx context.Context, ethRpc *ethclient.Client,
 		if err != nil {
 			return nil, err
 		}
-		if event != nil {
-			log.Info("Found Data Root submission event", "proof_nonce", event.ProofNonce, "start", event.StartBlock, "end", event.EndBlock)
-			return event, nil
+		if match != nil {
+			log.Info("Found Data Root submission event", "proof_nonce", match.ProofNonce, "start", match.StartBlock, "end", match.EndBlock)
+			return match, nil
 		}
 
-		if backwards {
-			if start >= 5000 {
-				start -= 5000
-			} else {
-				start = 0
-			}
-			if end < 5000 {
-				end = start + 1000
-			} else {
-				end -= 5000
-			}
-		} else {
-			// Make the sleep cancellable with context
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(time.Second * time.Duration(c.Cfg.ValidatorConfig.SleepTime)):
-			}
-
-			latestBlockNumber, err := ethRpc.BlockNumber(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			start = end
-			end = latestBlockNumber
+		if start == 0 {
+			return nil, nil
 		}
+		end = start - 1
 	}
 }
 
@@ -1368,7 +1355,7 @@ func (c *CelestiaDA) generateCertificateAttestationProof(
 		return nil, err
 	}
 
-	event, err := c.resolveBlobstreamEvent(ctx, ethRpc, blobstream, certificate.BlockHeight)
+	event, found, err := c.findBlobstreamCommitmentEvent(ctx, ethRpc, blobstream, certificate.BlockHeight)
 	if err != nil {
 		var validationErr *daprovider.CertificateValidationError
 		if errors.As(err, &validationErr) {
@@ -1377,6 +1364,9 @@ func (c *CelestiaDA) generateCertificateAttestationProof(
 		log.Warn("event filtering error", "err", err)
 		celestiaValidationFailureCounter.Inc(1)
 		return nil, err
+	}
+	if !found {
+		return nil, nil
 	}
 	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(
 		ctx, certificate.BlockHeight, event.StartBlock, event.EndBlock,
@@ -1472,11 +1462,14 @@ func (c *CelestiaDA) generateCelestiaProof(
 		return nil, err
 	}
 
-	event, err := c.resolveBlobstreamEvent(ctx, ethRpc, blobstream, certificate.BlockHeight)
+	event, found, err := c.findBlobstreamCommitmentEvent(ctx, ethRpc, blobstream, certificate.BlockHeight)
 	if err != nil {
 		log.Warn("event filtering error", "err", err)
 		celestiaValidationFailureCounter.Inc(1)
 		return nil, err
+	}
+	if !found {
+		return nil, certificateValidationError("missing blobstream commitment")
 	}
 	dataRootProof, err := c.ReadClient.Blobstream.GetDataRootTupleInclusionProof(
 		ctx, certificate.BlockHeight, event.StartBlock, event.EndBlock,

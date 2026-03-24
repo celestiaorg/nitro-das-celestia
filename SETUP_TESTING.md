@@ -1,0 +1,402 @@
+# Live Setup And Testing Guide
+
+This guide describes how to run `nitro-das-celestia` against a live Nitro rollup stack.
+
+It is written generically on purpose. The goal is to describe the components, order of operations, and checks you need, not to hardcode one wrapper script.
+
+## Scope
+
+Use this guide when you want to test:
+
+- a Nitro sequencer posting through the real `nitro-das-celestia` provider
+- read / preimage / validity proof generation against a real Celestia node
+- live challenge flows with honest and evil actors
+
+This is different from Nitro's current mock-backed Celestia BOLD tests, which run against Nitro's in-tree `daprovider/celestiada`.
+
+## Topology
+
+The live stack has five moving parts:
+
+1. An L1 chain.
+   This can be local Anvil or a devnet stack such as [`ethereum-docker`](https://github.com/tuxcanfly/ethereum-docker).
+2. A Celestia node.
+   The DA server needs writer RPC access and read RPC access. They can point to the same node.
+3. The `nitro-das-celestia` RPC server.
+   Nitro talks to this over the DA provider RPC API.
+4. A Nitro rollup deployment.
+   This includes the usual bridge / inbox / sequencer inbox / rollup contracts.
+5. Celestia-specific L1 contracts.
+   At minimum:
+   - `CelestiaDAProofValidator`
+   - a Blobstream contract address for proof validation
+   - in local testing this is usually a deployed `MockBlobstream`
+
+For live BOLD challenge testing you also need:
+
+- a custom OSP deployment that supports the Celestia proof paths
+- two challenger / staker identities
+- whitelist and staking configured so both honest and evil challengers can participate
+
+## Required Inputs
+
+At a minimum, gather these before starting:
+
+- L1 RPC URL
+- Celestia write RPC URL
+- Celestia write auth token
+- Celestia read RPC URL
+- Celestia read auth token
+- Celestia namespace ID
+- a deployed Blobstream-compatible contract address
+  - for local testing this is usually `MockBlobstream`
+- a deployed `CelestiaDAProofValidator` address
+
+If you use a local rollup deployment directory, also keep:
+
+- deployed contract addresses
+- generated Nitro config
+- DA server log path
+- Nitro log path
+- runtime data directories
+
+## Recommended Runtime Layout
+
+For repeatable live testing, keep a dedicated runtime directory per deployment.
+
+At minimum, persist:
+
+- deployed address state
+  - rollup
+  - bridge
+  - inbox
+  - sequencer inbox
+  - challenge manager
+  - custom OSP
+  - `CelestiaDAProofValidator`
+  - Blobstream or `MockBlobstream`
+- generated Nitro config
+- DA server logs
+- Nitro logs
+- challenger logs
+- Nitro chain data directories
+
+This matters because most failures are easier to debug from:
+
+- the exact deployed addresses used in the run
+- the DA server log
+- the Nitro node log
+- the challenge-manager event history
+
+## Recommended Roles
+
+It helps to keep these identities distinct:
+
+- deployer / rollup owner
+- sequencer / batch poster
+- honest challenger / staker
+- evil challenger / staker
+- optional separate account for mock Blobstream updates
+
+In local environments, pre-funded deterministic keys are fine. In a shared devnet, use dedicated test-only keys.
+
+## Recommended Deployment Order
+
+1. Build the Nitro binaries and the `nitro-das-celestia` server binary.
+2. Bring up L1.
+3. Deploy the rollup contracts.
+4. Deploy the Celestia-specific validator contract.
+   Point it at either:
+   - a real Blobstream deployment, or
+   - a local `MockBlobstream`
+5. Register the Celestia DA keyset on `SequencerInbox`.
+   In practice this is usually done through the rollup owner / upgrade executor.
+6. Configure challenger identities.
+   This usually means:
+   - disable the validator whitelist for the test rollup
+   - add honest and evil actors as validators
+   - fund them
+   - create their stake
+7. Start `nitro-das-celestia`.
+8. Start Nitro with external DA provider enabled and pointing at the DA server RPC URL.
+9. Start honest and evil stakers if you are testing BOLD.
+
+## Deployment Checklist
+
+A practical deployment usually looks like this:
+
+### 1. Build Artifacts
+
+Build:
+
+- Nitro binaries
+- Nitro local contracts / OSP artifacts
+- `nitro-das-celestia` server binary
+- Celestia validator contracts
+
+Before continuing, verify the binaries and contract artifacts exist where your deployment scripts expect them.
+
+### 2. Prepare L1
+
+Bring up an L1 chain and verify:
+
+- RPC is reachable
+- deployer account is funded
+- gas pricing and chain ID are known
+
+### 3. Deploy Rollup Contracts
+
+Deploy the normal Nitro rollup stack and record:
+
+- rollup
+- bridge
+- inbox
+- sequencer inbox
+- challenge manager
+
+You will need these later for:
+
+- Nitro config generation
+- keyset registration
+- challenge monitoring
+
+### 4. Deploy Celestia Validator Contracts
+
+Deploy:
+
+- Blobstream-compatible contract
+  - local `MockBlobstream` is the practical default
+- `CelestiaDAProofValidator`
+
+Record both addresses.
+
+### 5. Deploy Custom OSP
+
+For BOLD challenge testing, deploy the OneStepProof entry / custom OSP that supports Celestia proof markers.
+
+Record the address and wire it into the rollup / challenge setup expected by your Nitro environment.
+
+### 6. Register The DA Keyset
+
+Register the Celestia DA keyset on `SequencerInbox`.
+
+The important fields are:
+
+- provider type / header byte
+- `CelestiaDAProofValidator` address
+- Blobstream address used by the validator
+
+Do not skip this step. Nitro can appear healthy while batch posting silently fails later if the keyset is not valid onchain.
+
+### 7. Configure Challengers
+
+Before running BOLD:
+
+- disable the validator whitelist for the test rollup if needed
+- mark honest and evil actors as validators
+- fund both actors
+- deposit stake token if required
+- approve stake spending
+- create stakes
+
+Then verify both actors are:
+
+- validators
+- staked
+- able to submit transactions on L1
+
+## DA Server Requirements
+
+The `nitro-das-celestia` process needs:
+
+- RPC server enabled
+- writer mode enabled
+- Celestia write RPC URL
+- Celestia read RPC URL
+- Celestia write auth token
+- Celestia read auth token
+- namespace ID
+- L1 RPC URL for validation
+- Blobstream contract address for validation
+
+In practice the validation configuration is what lets the DA server produce:
+
+- certificate validity proofs
+- read-preimage proofs
+
+If the validation config is wrong, posting may still work while proof generation fails later.
+
+When starting the DA server, make sure the runtime wiring is internally consistent:
+
+- L1 RPC must match the chain where `CelestiaDAProofValidator` and Blobstream are deployed
+- namespace must match the namespace used for posting
+- read and write Celestia RPCs must be authorized
+- Blobstream address must be the one the validator expects
+
+## Nitro Requirements
+
+Nitro should be configured to:
+
+- enable external DA provider mode
+- point its DA RPC URL at the `nitro-das-celestia` server
+- allow the batch poster to use the external provider as writer
+- use a delayed sequencer configuration that finalizes quickly enough for local testing
+
+A good Nitro config shape for this setup usually includes:
+
+- external DA provider enabled
+- DA writer enabled
+- sequencer enabled
+- batch poster enabled
+- delayed sequencer enabled with short finalization distance for local testing
+- persistent chain data stored outside the repo root or in a dedicated runtime directory
+
+Nitro also needs the onchain deployment outputs from your rollup creation step. In practice, config generation usually means substituting:
+
+- L1 RPC URL
+- DA RPC URL
+- chain info JSON
+- deployer / batch poster key
+- persistent data directory
+- any custom OSP or challenge-related addresses required by your environment
+
+## Blobstream Strategy
+
+There are two realistic modes.
+
+### Real Blobstream
+
+Use a real Blobstream contract and real attestation availability.
+
+This is closer to production but slower and harder to control.
+
+### Mock Blobstream
+
+Use a local `MockBlobstream` contract and feed it commitments derived from the Celestia data you post.
+
+This is the practical local-dev path and is what the Nitro automation is designed around.
+
+For local Celestia testing, the important rule is:
+
+- every certificate that you expect to validate later must have a corresponding `DataCommitmentStored` submission on the L1 Blobstream contract
+
+If you use `MockBlobstream`, keep submissions flowing:
+
+- either emit commitments explicitly after posting a cert
+- or run a background "pump" that keeps submitting commitment ranges
+
+Without this, `GenerateCertificateValidityProof` and `GenerateReadPreimageProof` will fail for attestation reasons even when storage and reads work.
+
+For local live testing, `MockBlobstream` is usually the right default because:
+
+- it keeps the DA provider real
+- it avoids waiting for a real relayer path
+- it gives you deterministic control over which certificates become attestable
+
+## What To Validate First
+
+Before attempting a full BOLD challenge run, validate the stack in stages.
+
+### Stage 1: DA Server Smoke Test
+
+Confirm that:
+
+- Nitro can connect to the DA RPC endpoint
+- the DA server accepts `Store`
+- the returned certificate is embedded in the sequencer message
+- the batch reaches `SequencerInbox`
+
+### Stage 2: Read Path
+
+Confirm that:
+
+- `RecoverPayload` returns the original batch payload
+- `CollectPreimages` records the certificate preimage
+- empty batches behave as valid empty payloads, not as infrastructure failures
+
+### Stage 3: Proof Path
+
+Confirm that:
+
+- `GenerateCertificateValidityProof` succeeds for posted and attested certificates
+- `GenerateReadPreimageProof` succeeds for realistic aligned offsets
+- onchain `validateCertificate` and `validateReadPreimage` accept the proofs
+
+### Stage 4: Divergence / Challenge Path
+
+Only after the above are green should you start honest and evil challengers and run live BOLD divergence scenarios.
+
+## Live BOLD Runbook
+
+A minimal live BOLD exercise usually has this shape:
+
+1. Start the honest DA path.
+2. Start the evil DA path.
+   This may be:
+   - a second DA provider instance
+   - an interceptor / wrapper that mutates reads or proofs
+3. Start Nitro nodes for the honest and evil actors.
+4. Start the honest and evil stakers.
+5. Generate a small number of L2 batches that create a controlled divergence.
+6. Watch challenge-manager and OSP-related events on L1.
+7. Confirm the expected winner submitted the decisive OSP confirmation.
+
+If you want repeatability, keep the divergence scenario small:
+
+- one honest batch
+- one divergent batch
+- one targeted evil behavior
+
+That is easier to debug than a long-running mixed workload.
+
+## Live BOLD Notes
+
+The important orchestration shape for live BOLD is:
+
+- deploy a custom OSP
+- run honest and evil DA paths
+- configure honest and evil stakers
+- watch challenge-manager events
+- assert the OSP winner
+
+If you are building a reusable local environment, a devnet stack such as [`ethereum-docker`](https://github.com/tuxcanfly/ethereum-docker) is a reasonable L1 base.
+
+## Common Failure Modes
+
+### Celestia writes succeed but proofs fail
+
+Usually one of:
+
+- no Blobstream commitment was submitted
+- wrong Blobstream address in validator config
+- read RPC is behind while proof generation expects newer tuple roots
+
+### Nitro posts no batches
+
+Usually one of:
+
+- DA RPC URL misconfigured
+- keyset not registered on `SequencerInbox`
+- external DA writer enabled but server not reachable
+- batch poster key not funded or not configured
+
+### BOLD challengers never engage
+
+Usually one of:
+
+- challengers were not added as validators
+- whitelist still enabled
+- stake token not funded / approved / staked
+- custom OSP not deployed or not wired into the challenge path
+- honest / evil staker processes not actually running
+
+## Practical Recommendation
+
+For local repeatable testing:
+
+- use a local L1
+- use the real `nitro-das-celestia` server
+- use a real Celestia node
+- use `MockBlobstream`
+
+That gives you the real DA provider code path while keeping the attestation side deterministic enough for development.

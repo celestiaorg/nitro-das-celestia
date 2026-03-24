@@ -114,10 +114,8 @@ Bias toward fixing code, not lowering the test bar.
 - `contracts/src/CelestiaDAProofValidator.sol`
 - `contracts/test/CelestiaDAProofValidator.t.sol`
 
-## Known Current Gaps
+## BOLD Caveat
 
-As of the latest test work in this repo, the main spec gaps are:
+Current Nitro BOLD/Celestia challenge tests run against the Nitro-side mock `daprovider/celestiada`, not against the real `nitro-das-celestia` provider wired to a live Celestia node.
 
-- end-to-end Nitro BOLD/custom-DA challenge coverage against the real provider is still pending
-
-Do not remove or soften tests that cover these areas unless the spec itself changes.
+Do not treat those tests as automated proof of real-provider end-to-end coverage.

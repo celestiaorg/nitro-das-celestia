@@ -63,10 +63,30 @@ contract CelestiaDAProofValidatorTest is Test {
         assertFalse(validator.validateCertificate(proof));
     }
 
+    function test_validateCertificate_shortProof_returnsFalse() public view {
+        assertFalse(validator.validateCertificate(hex"00010203"));
+    }
+
+    function test_validateCertificate_truncatedAfterCertSize_returnsFalse() public view {
+        bytes memory truncated = new bytes(validCert.length - 1);
+        for (uint256 i = 0; i < truncated.length; i++) {
+            truncated[i] = validCert[i];
+        }
+        bytes memory proof = abi.encodePacked(uint64(validCert.length), truncated);
+        assertFalse(validator.validateCertificate(proof));
+    }
+
     function test_validateCertificate_invalidStructure_claimed1_returnsFalse() public view {
         bytes memory badCert = bytes(validCert);
         badCert[0] = 0x00;
         bytes memory proof = abi.encodePacked(uint64(badCert.length), badCert, bytes1(0x01), bytes1(0x01));
+        assertFalse(validator.validateCertificate(proof));
+    }
+
+    function test_validateCertificate_invalidStructure_claimed0_returnsFalse() public view {
+        bytes memory badCert = bytes(validCert);
+        badCert[0] = 0x00;
+        bytes memory proof = abi.encodePacked(uint64(badCert.length), badCert, bytes1(0x00), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 
@@ -91,6 +111,15 @@ contract CelestiaDAProofValidatorTest is Test {
             truncatedCert[i] = validCert[i];
         }
         bytes memory proof = abi.encodePacked(uint64(truncatedCert.length), truncatedCert, bytes1(0x01), bytes1(0x01));
+        assertFalse(validator.validateCertificate(proof));
+    }
+
+    function test_validateCertificate_claimed0_truncatedCertificate_returnsFalse() public view {
+        bytes memory truncatedCert = new bytes(validCert.length - 1);
+        for (uint256 i = 0; i < truncatedCert.length; i++) {
+            truncatedCert[i] = validCert[i];
+        }
+        bytes memory proof = abi.encodePacked(uint64(truncatedCert.length), truncatedCert, bytes1(0x00), bytes1(0x01));
         assertFalse(validator.validateCertificate(proof));
     }
 

@@ -118,7 +118,6 @@ Bias toward fixing code, not lowering the test bar.
 
 As of the latest test work in this repo, the main spec gaps are:
 
-- onchain invalid-certificate coverage could still be broadened further if more Go-side invalid-cert classes are mirrored explicitly in Solidity tests
 - end-to-end Nitro BOLD/custom-DA challenge coverage against the real provider is still pending
 
 Do not remove or soften tests that cover these areas unless the spec itself changes.

@@ -10,7 +10,6 @@ import (
 	"math"
 	"math/big"
 	"math/rand"
-	"net"
 	"os"
 	"strings"
 	"sync"
@@ -1372,12 +1371,9 @@ func (c *CelestiaDA) generateCertificateAttestationProof(
 		ctx, certificate.BlockHeight, event.StartBlock, event.EndBlock,
 	)
 	if err != nil {
-		if isTransientError(err) {
-			log.Warn("could not get data root proof", "err", err)
-			celestiaValidationFailureCounter.Inc(1)
-			return nil, err
-		}
-		return nil, nil
+		log.Warn("could not get data root proof", "err", err)
+		celestiaValidationFailureCounter.Inc(1)
+		return nil, err
 	}
 
 	attestationProof := toAttestationProof(
@@ -1410,20 +1406,6 @@ func (c *CelestiaDA) generateCertificateAttestationProof(
 		return nil, nil
 	}
 	return &attestationProof, nil
-}
-
-func isTransientError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return true
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return netErr.Timeout() || netErr.Temporary()
-	}
-	return false
 }
 
 func certificateValidationError(reason string) error {

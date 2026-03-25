@@ -51,6 +51,14 @@ func makeSequencerMessage(t *testing.T, certificate *cert.CelestiaDACertV1) []by
 	return sequencerMsg
 }
 
+func makeMalformedSequencerMessage(t *testing.T, mutate func([]byte) []byte) []byte {
+	t.Helper()
+
+	certificate, _ := makeValidReadFixture(t, []byte("payload"))
+	sequencerMsg := makeSequencerMessage(t, certificate)
+	return mutate(sequencerMsg)
+}
+
 func makeValidReadFixture(t *testing.T, message []byte) (*cert.CelestiaDACertV1, *ReadResult) {
 	t.Helper()
 
@@ -164,6 +172,60 @@ func TestRecoverPayloadFromCelestiaBatch_InvalidSequencerMessage(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRecoverPayloadFromCelestiaBatch_MalformedCertificateReturnsCertificateValidationError(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		sequencerMsg []byte
+		wantContains string
+	}{
+		{
+			name:         "sequencer_message_too_short",
+			sequencerMsg: []byte{0x01, 0x02},
+			wantContains: "certificate validation failed",
+		},
+		{
+			name: "invalid_certificate_header",
+			sequencerMsg: makeMalformedSequencerMessage(t, func(msg []byte) []byte {
+				mutated := append([]byte(nil), msg...)
+				mutated[cert.SequencerMsgOffset] = 0x00
+				return mutated
+			}),
+			wantContains: "certificate validation failed: invalid certificate header",
+		},
+		{
+			name: "invalid_provider_type",
+			sequencerMsg: makeMalformedSequencerMessage(t, func(msg []byte) []byte {
+				mutated := append([]byte(nil), msg...)
+				mutated[cert.SequencerMsgOffset+1] = 0x00
+				return mutated
+			}),
+			wantContains: "certificate validation failed: invalid provider type",
+		},
+		{
+			name: "unsupported_certificate_version",
+			sequencerMsg: makeMalformedSequencerMessage(t, func(msg []byte) []byte {
+				mutated := append([]byte(nil), msg...)
+				mutated[cert.SequencerMsgOffset+2] = 0x00
+				mutated[cert.SequencerMsgOffset+3] = 0x02
+				return mutated
+			}),
+			wantContains: "certificate validation failed: unsupported certificate version",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := RecoverPayloadFromCelestiaBatch(context.Background(), 1, tc.sequencerMsg, &fakeReader{}, false)
+			require.Error(t, err)
+			require.ErrorContains(t, err, tc.wantContains)
+			require.True(t, daprovider.IsCertificateValidationError(err))
+		})
+	}
+}
+
 func TestRecoverPayloadFromCelestiaBatch_ReadError(t *testing.T) {
 	t.Parallel()
 
@@ -222,6 +284,68 @@ func TestReaderForCelestia_RecoverPayload_PropagatesInfrastructureError(t *testi
 	require.False(t, daprovider.IsCertificateValidationError(err))
 }
 
+func TestReaderForCelestia_MalformedCertificateReturnsCertificateValidationError(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		sequencerMsg []byte
+	}{
+		{name: "sequencer_message_too_short", sequencerMsg: []byte{0x01, 0x02}},
+		{
+			name: "invalid_certificate_header",
+			sequencerMsg: makeMalformedSequencerMessage(t, func(msg []byte) []byte {
+				mutated := append([]byte(nil), msg...)
+				mutated[cert.SequencerMsgOffset] = 0x00
+				return mutated
+			}),
+		},
+		{
+			name: "invalid_provider_type",
+			sequencerMsg: makeMalformedSequencerMessage(t, func(msg []byte) []byte {
+				mutated := append([]byte(nil), msg...)
+				mutated[cert.SequencerMsgOffset+1] = 0x00
+				return mutated
+			}),
+		},
+		{
+			name: "unsupported_certificate_version",
+			sequencerMsg: makeMalformedSequencerMessage(t, func(msg []byte) []byte {
+				mutated := append([]byte(nil), msg...)
+				mutated[cert.SequencerMsgOffset+2] = 0x00
+				mutated[cert.SequencerMsgOffset+3] = 0x02
+				return mutated
+			}),
+		},
+	}
+
+	reader := NewReaderForCelestia(&fakeReader{})
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run("recover_payload_"+tc.name, func(t *testing.T) {
+			_, err := reader.RecoverPayload(1, common.Hash{}, tc.sequencerMsg).Await(context.Background())
+			require.Error(t, err)
+			require.ErrorContains(t, err, "certificate validation failed")
+			require.True(t, daprovider.IsCertificateValidationError(err))
+		})
+
+		t.Run("collect_preimages_"+tc.name, func(t *testing.T) {
+			_, err := reader.CollectPreimages(1, common.Hash{}, tc.sequencerMsg).Await(context.Background())
+			require.Error(t, err)
+			require.ErrorContains(t, err, "certificate validation failed")
+			require.True(t, daprovider.IsCertificateValidationError(err))
+		})
+
+		t.Run("recover_payload_and_preimages_"+tc.name, func(t *testing.T) {
+			_, err := reader.RecoverPayloadAndPreimages(1, common.Hash{}, tc.sequencerMsg).Await(context.Background())
+			require.Error(t, err)
+			require.ErrorContains(t, err, "certificate validation failed")
+			require.True(t, daprovider.IsCertificateValidationError(err))
+		})
+	}
+}
+
 func TestRecoverPayloadFromCelestiaBatch_EmptyPayloadReturnsSuccess(t *testing.T) {
 	t.Parallel()
 
@@ -268,7 +392,8 @@ func TestRecoverPayloadFromCelestiaBatch_RowRootMismatch(t *testing.T) {
 		reader,
 		true,
 	)
-	require.ErrorContains(t, err, "row root mismatch")
+	require.ErrorContains(t, err, "certificate validation failed: row root mismatch")
+	require.True(t, daprovider.IsCertificateValidationError(err))
 }
 
 func TestRecoverPayloadFromCelestiaBatch_DataRootMismatch(t *testing.T) {
@@ -285,7 +410,57 @@ func TestRecoverPayloadFromCelestiaBatch_DataRootMismatch(t *testing.T) {
 		reader,
 		true,
 	)
-	require.ErrorContains(t, err, "data roots do not match")
+	require.ErrorContains(t, err, "certificate validation failed: data roots do not match")
+	require.True(t, daprovider.IsCertificateValidationError(err))
+}
+
+func TestReaderForCelestia_PostParseInvalidCertificateReturnsCertificateValidationError(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		mutate func(*cert.CelestiaDACertV1, *ReadResult)
+	}{
+		{
+			name: "row_root_mismatch",
+			mutate: func(_ *cert.CelestiaDACertV1, result *ReadResult) {
+				result.RowRoots[0] = append([]byte(nil), result.RowRoots[0]...)
+				result.RowRoots[0][0] ^= 0xff
+			},
+		},
+		{
+			name: "data_root_mismatch",
+			mutate: func(certificate *cert.CelestiaDACertV1, _ *ReadResult) {
+				certificate.DataRoot[0] ^= 0xff
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			certificate, result := makeValidReadFixture(t, []byte("payload"))
+			tc.mutate(certificate, result)
+
+			reader := NewReaderForCelestia(&fakeReader{readResult: result})
+			sequencerMsg := makeSequencerMessage(t, certificate)
+
+			_, err := reader.RecoverPayload(1, common.Hash{}, sequencerMsg).Await(context.Background())
+			require.Error(t, err)
+			require.ErrorContains(t, err, "certificate validation failed")
+			require.True(t, daprovider.IsCertificateValidationError(err))
+
+			_, err = reader.CollectPreimages(1, common.Hash{}, sequencerMsg).Await(context.Background())
+			require.Error(t, err)
+			require.ErrorContains(t, err, "certificate validation failed")
+			require.True(t, daprovider.IsCertificateValidationError(err))
+
+			_, err = reader.RecoverPayloadAndPreimages(1, common.Hash{}, sequencerMsg).Await(context.Background())
+			require.Error(t, err)
+			require.ErrorContains(t, err, "certificate validation failed")
+			require.True(t, daprovider.IsCertificateValidationError(err))
+		})
+	}
 }
 
 func TestReaderForCelestia_RecoverPayloadAndPreimages(t *testing.T) {

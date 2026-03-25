@@ -2,6 +2,7 @@ package validator
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
@@ -21,7 +22,9 @@ func (v *CelestiaValidator) GenerateReadPreimageProof(offset uint64, certificate
 	return containers.DoPromise(context.Background(), func(ctx context.Context) (daprovider.PreimageProofResult, error) {
 		parsed, err := cert.ParseCelestiaCertificate(certificate)
 		if err != nil {
-			return daprovider.PreimageProofResult{Proof: []byte{}}, err
+			return daprovider.PreimageProofResult{Proof: []byte{}}, &daprovider.CertificateValidationError{
+				Reason: fmt.Sprintf("certificate validation failed: %s", err),
+			}
 		}
 
 		proof, err := v.reader.GenerateReadPreimageProof(ctx, offset, parsed)

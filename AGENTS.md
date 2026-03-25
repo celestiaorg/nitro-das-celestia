@@ -59,8 +59,14 @@ Important:
 
 Validator APIs:
 
-- `GenerateCertificateValidityProof`
 - `GenerateReadPreimageProof`
+
+Expected behavior:
+
+- Invalid certificate => `daprovider.CertificateValidationError`
+- Infrastructure failure => error
+
+- `GenerateCertificateValidityProof`
 
 Expected behavior:
 

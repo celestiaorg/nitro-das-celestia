@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"
@@ -141,7 +142,7 @@ func RecoverPayloadFromCelestiaBatch(
 
 	certificate, err := cert.ExtractFromSequencerMessage(sequencerMsg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, certificateValidationError(err)
 	}
 
 	result, err := celestiaReader.Read(ctx, certificate)
@@ -150,43 +151,58 @@ func RecoverPayloadFromCelestiaBatch(
 		return nil, nil, err
 	}
 
+	record := preimageRecorder
+	if record == nil {
+		record = func(common.Hash, []byte, arbutil.PreimageType) {}
+	}
+
 	if preimageRecorder != nil {
 		certBytes, err := certificate.MarshalBinary()
 		if err != nil {
 			return nil, nil, err
 		}
 		preimageRecorder(crypto.Keccak256Hash(certBytes), result.Message, arbutil.DACertificatePreimageType)
+	}
 
-		odsSize := result.SquareSize / 2
-		rowIndex := result.StartRow
-		for _, row := range result.Rows {
-			treeConstructor := tree.NewConstructor(preimageRecorder, odsSize)
-			root, err := tree.ComputeNmtRoot(treeConstructor, uint(rowIndex), row)
-			if err != nil {
-				log.Error("Failed to compute row root", "err", err)
-				return nil, nil, err
-			}
-
-			if !bytes.Equal(result.RowRoots[rowIndex], root) {
-				log.Error("Row root mismatch", "rowIndex", rowIndex)
-				return nil, nil, errors.New("row root mismatch")
-			}
-			rowIndex++
+	odsSize := result.SquareSize / 2
+	rowIndex := result.StartRow
+	for _, row := range result.Rows {
+		treeConstructor := tree.NewConstructor(record, odsSize)
+		root, err := tree.ComputeNmtRoot(treeConstructor, uint(rowIndex), row)
+		if err != nil {
+			log.Error("Failed to compute row root", "err", err)
+			return nil, nil, err
 		}
 
-		rowsCount := len(result.RowRoots)
-		slices := make([][]byte, rowsCount+rowsCount)
-		copy(slices[0:rowsCount], result.RowRoots)
-		copy(slices[rowsCount:], result.ColumnRoots)
-
-		dataRoot := tree.HashFromByteSlices(preimageRecorder, slices)
-
-		dataRootMatches := bytes.Equal(dataRoot, certificate.DataRoot[:])
-		if !dataRootMatches {
-			log.Error("Data Root do not match", "blobPointer data root", certificate.DataRoot, "calculated", dataRoot)
-			return nil, nil, errors.New("data roots do not match")
+		if !bytes.Equal(result.RowRoots[rowIndex], root) {
+			log.Error("Row root mismatch", "rowIndex", rowIndex)
+			return nil, nil, certificateValidationError(errors.New("row root mismatch"))
 		}
+		rowIndex++
+	}
+
+	rowsCount := len(result.RowRoots)
+	slices := make([][]byte, rowsCount+rowsCount)
+	copy(slices[0:rowsCount], result.RowRoots)
+	copy(slices[rowsCount:], result.ColumnRoots)
+
+	dataRoot := tree.HashFromByteSlices(record, slices)
+
+	dataRootMatches := bytes.Equal(dataRoot, certificate.DataRoot[:])
+	if !dataRootMatches {
+		log.Error("Data Root do not match", "blobPointer data root", certificate.DataRoot, "calculated", dataRoot)
+		return nil, nil, certificateValidationError(errors.New("data roots do not match"))
 	}
 
 	return result.Message, preimages, nil
+}
+
+func certificateValidationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if daprovider.IsCertificateValidationError(err) {
+		return err
+	}
+	return &daprovider.CertificateValidationError{Reason: fmt.Sprintf("certificate validation failed: %s", err)}
 }

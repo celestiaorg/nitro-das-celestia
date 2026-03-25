@@ -206,10 +206,6 @@ func (serv *DaClientServer) RecoverPayload(
 	batchBlockHash common.Hash,
 	sequencerMsg hexutil.Bytes,
 ) (*daprovider.PayloadResult, error) {
-	if _, err := cert.ExtractFromSequencerMessage(sequencerMsg); err != nil {
-		return nil, err
-	}
-
 	promise := serv.reader.RecoverPayload(uint64(batchNum), batchBlockHash, sequencerMsg)
 	result, err := promise.Await(ctx)
 	if err != nil {
@@ -230,10 +226,6 @@ func (serv *DaClientServer) CollectPreimages(
 	batchBlockHash common.Hash,
 	sequencerMsg hexutil.Bytes,
 ) (*daprovider.PreimagesResult, error) {
-	if _, err := cert.ExtractFromSequencerMessage(sequencerMsg); err != nil {
-		return nil, err
-	}
-
 	promise := serv.reader.CollectPreimages(uint64(batchNum), batchBlockHash, sequencerMsg)
 	result, err := promise.Await(ctx)
 	if err != nil {
@@ -248,10 +240,6 @@ func (serv *DaClientServer) RecoverPayloadAndPreimages(
 	batchBlockHash common.Hash,
 	sequencerMsg hexutil.Bytes,
 ) (*daprovider.PayloadAndPreimagesResult, error) {
-	if _, err := cert.ExtractFromSequencerMessage(sequencerMsg); err != nil {
-		return nil, err
-	}
-
 	promise := serv.reader.RecoverPayloadAndPreimages(uint64(batchNum), batchBlockHash, sequencerMsg)
 	result, err := promise.Await(ctx)
 	if err != nil {

@@ -25,6 +25,8 @@ contract CelestiaDAProofValidatorTest is Test {
     Namespace internal ns;
     NamespaceNode internal rowRoot0;
     NamespaceNode internal rowRoot1;
+    NamespaceNode internal colRoot0;
+    NamespaceNode internal colRoot1;
     bytes32 internal certDataRoot;
     bytes internal validCert;
     bytes internal payload;
@@ -37,10 +39,17 @@ contract CelestiaDAProofValidatorTest is Test {
 
         rowRoot0 = leafDigest(ns, share0);
         rowRoot1 = leafDigest(ns, share1);
+        colRoot0 = leafDigest(ns, abi.encodePacked("col-root-0"));
+        colRoot1 = leafDigest(ns, abi.encodePacked("col-root-1"));
 
         bytes memory rowRootBytes0 = abi.encodePacked(rowRoot0.min.toBytes(), rowRoot0.max.toBytes(), rowRoot0.digest);
         bytes memory rowRootBytes1 = abi.encodePacked(rowRoot1.min.toBytes(), rowRoot1.max.toBytes(), rowRoot1.digest);
-        certDataRoot = nodeDigest(leafDigest(rowRootBytes0), leafDigest(rowRootBytes1));
+        bytes memory colRootBytes0 = abi.encodePacked(colRoot0.min.toBytes(), colRoot0.max.toBytes(), colRoot0.digest);
+        bytes memory colRootBytes1 = abi.encodePacked(colRoot1.min.toBytes(), colRoot1.max.toBytes(), colRoot1.digest);
+        certDataRoot = nodeDigest(
+            nodeDigest(leafDigest(rowRootBytes0), leafDigest(rowRootBytes1)),
+            nodeDigest(leafDigest(colRootBytes0), leafDigest(colRootBytes1))
+        );
 
         validCert = _buildCert(certHeight, certStart, certSharesLength, keccak256("tx-commitment"), certDataRoot);
 
@@ -445,6 +454,8 @@ contract CelestiaDAProofValidatorTest is Test {
 
         bytes memory rowRootBytes0 = abi.encodePacked(rowRoot0.min.toBytes(), rowRoot0.max.toBytes(), rowRoot0.digest);
         bytes memory rowRootBytes1 = abi.encodePacked(rowRoot1.min.toBytes(), rowRoot1.max.toBytes(), rowRoot1.digest);
+        bytes memory colRootBytes0 = abi.encodePacked(colRoot0.min.toBytes(), colRoot0.max.toBytes(), colRoot0.digest);
+        bytes memory colRootBytes1 = abi.encodePacked(colRoot1.min.toBytes(), colRoot1.max.toBytes(), colRoot1.digest);
 
         uint8 chunkLen = 0;
         if (offset < payloadSize) {
@@ -481,30 +492,35 @@ contract CelestiaDAProofValidatorTest is Test {
 
         bytes32 digest0 = leafDigest(rowRootBytes0);
         bytes32 digest1 = leafDigest(rowRootBytes1);
+        bytes32 upperHalf = nodeDigest(leafDigest(colRootBytes0), leafDigest(colRootBytes1));
 
         if (shareCount == 0) {
             // Deliberately empty: the validator should reject the header before decoding proof internals.
         } else if (shareCount == 1) {
             if (firstShareIndex == certStart) {
                 rowRoots[0] = rowRoot0;
-                bytes32[] memory side0 = new bytes32[](1);
+                bytes32[] memory side0 = new bytes32[](2);
                 side0[0] = digest1;
-                rowProofs[0] = BinaryMerkleProof({sideNodes: side0, key: 0, numLeaves: 2});
+                side0[1] = upperHalf;
+                rowProofs[0] = BinaryMerkleProof({sideNodes: side0, key: 0, numLeaves: 4});
             } else {
                 rowRoots[0] = rowRoot1;
-                bytes32[] memory side1 = new bytes32[](1);
+                bytes32[] memory side1 = new bytes32[](2);
                 side1[0] = digest0;
-                rowProofs[0] = BinaryMerkleProof({sideNodes: side1, key: 1, numLeaves: 2});
+                side1[1] = upperHalf;
+                rowProofs[0] = BinaryMerkleProof({sideNodes: side1, key: 1, numLeaves: 4});
             }
         } else {
             rowRoots[0] = rowRoot0;
             rowRoots[1] = rowRoot1;
-            bytes32[] memory sideA = new bytes32[](1);
+            bytes32[] memory sideA = new bytes32[](2);
             sideA[0] = digest1;
-            rowProofs[0] = BinaryMerkleProof({sideNodes: sideA, key: 0, numLeaves: 2});
-            bytes32[] memory sideB = new bytes32[](1);
+            sideA[1] = upperHalf;
+            rowProofs[0] = BinaryMerkleProof({sideNodes: sideA, key: 0, numLeaves: 4});
+            bytes32[] memory sideB = new bytes32[](2);
             sideB[0] = digest0;
-            rowProofs[1] = BinaryMerkleProof({sideNodes: sideB, key: 1, numLeaves: 2});
+            sideB[1] = upperHalf;
+            rowProofs[1] = BinaryMerkleProof({sideNodes: sideB, key: 1, numLeaves: 4});
         }
 
         BinaryMerkleProof memory tupleProof = BinaryMerkleProof({sideNodes: new bytes32[](0), key: 0, numLeaves: 1});
@@ -527,9 +543,10 @@ contract CelestiaDAProofValidatorTest is Test {
             NamespaceNode[] memory payloadSizeRowRoots = new NamespaceNode[](1);
             payloadSizeRowRoots[0] = rowRoot0;
             BinaryMerkleProof[] memory payloadSizeRowProofs = new BinaryMerkleProof[](1);
-            bytes32[] memory payloadSizeSide = new bytes32[](1);
+            bytes32[] memory payloadSizeSide = new bytes32[](2);
             payloadSizeSide[0] = digest1;
-            payloadSizeRowProofs[0] = BinaryMerkleProof({sideNodes: payloadSizeSide, key: 0, numLeaves: 2});
+            payloadSizeSide[1] = upperHalf;
+            payloadSizeRowProofs[0] = BinaryMerkleProof({sideNodes: payloadSizeSide, key: 0, numLeaves: 4});
 
             SharesProof memory payloadSizeProof = SharesProof({
                 data: payloadSizeData,
@@ -564,8 +581,13 @@ contract CelestiaDAProofValidatorTest is Test {
     {
         DataRootTuple memory tuple = DataRootTuple({height: certHeight, dataRoot: certDataRoot});
 
+        bytes memory rowRootBytes0 = abi.encodePacked(rowRoot0.min.toBytes(), rowRoot0.max.toBytes(), rowRoot0.digest);
         bytes memory rowRootBytes1 = abi.encodePacked(rowRoot1.min.toBytes(), rowRoot1.max.toBytes(), rowRoot1.digest);
+        bytes memory colRootBytes0 = abi.encodePacked(colRoot0.min.toBytes(), colRoot0.max.toBytes(), colRoot0.digest);
+        bytes memory colRootBytes1 = abi.encodePacked(colRoot1.min.toBytes(), colRoot1.max.toBytes(), colRoot1.digest);
+        bytes32 digest0 = leafDigest(rowRootBytes0);
         bytes32 digest1 = leafDigest(rowRootBytes1);
+        bytes32 upperHalf = nodeDigest(leafDigest(colRootBytes0), leafDigest(colRootBytes1));
 
         uint8 chunkLen = expectedChunkLen(offset, payloadSize);
         uint64 encodedFirstShareIndex = certStart + _payloadOffsetToShareRel(offset);
@@ -581,9 +603,10 @@ contract CelestiaDAProofValidatorTest is Test {
         NamespaceNode[] memory rowRoots = new NamespaceNode[](1);
         rowRoots[0] = rowRoot0;
         BinaryMerkleProof[] memory rowProofs = new BinaryMerkleProof[](1);
-        bytes32[] memory side0 = new bytes32[](1);
+        bytes32[] memory side0 = new bytes32[](2);
         side0[0] = digest1;
-        rowProofs[0] = BinaryMerkleProof({sideNodes: side0, key: 0, numLeaves: 2});
+        side0[1] = upperHalf;
+        rowProofs[0] = BinaryMerkleProof({sideNodes: side0, key: 0, numLeaves: 4});
 
         BinaryMerkleProof memory tupleProof = BinaryMerkleProof({sideNodes: new bytes32[](0), key: 0, numLeaves: 1});
 
@@ -603,9 +626,10 @@ contract CelestiaDAProofValidatorTest is Test {
         NamespaceNode[] memory payloadSizeRowRoots = new NamespaceNode[](1);
         payloadSizeRowRoots[0] = rowRoot0;
         BinaryMerkleProof[] memory payloadSizeRowProofs = new BinaryMerkleProof[](1);
-        bytes32[] memory payloadSizeSide = new bytes32[](1);
+        bytes32[] memory payloadSizeSide = new bytes32[](2);
         payloadSizeSide[0] = digest1;
-        payloadSizeRowProofs[0] = BinaryMerkleProof({sideNodes: payloadSizeSide, key: 0, numLeaves: 2});
+        payloadSizeSide[1] = upperHalf;
+        payloadSizeRowProofs[0] = BinaryMerkleProof({sideNodes: payloadSizeSide, key: 0, numLeaves: 4});
 
         SharesProof memory payloadSizeProof = SharesProof({
             data: payloadSizeData,

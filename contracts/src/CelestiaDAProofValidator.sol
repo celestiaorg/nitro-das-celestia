@@ -630,9 +630,13 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
 
         for (uint256 i = 0; i < shareProofs.length; i++) {
             uint256 numLeaves = rowProofs[i].numLeaves;
-            require(numLeaves >= 2 && numLeaves % 2 == 0, "Invalid proved share position");
+            require(numLeaves >= 4 && numLeaves % 4 == 0, "Invalid proved share position");
 
-            uint256 currentRowWidth = numLeaves / 2;
+            // Row proofs are against the full data-root tree, which commits to
+            // EDS row roots followed by EDS column roots. Certificate share
+            // indices are over the original data square, so the row width is a
+            // quarter of the total leaves in that tree: (2*EDSWidth)/4 = ODSWidth.
+            uint256 currentRowWidth = numLeaves / 4;
             if (i == 0) {
                 rowWidth = currentRowWidth;
             } else {

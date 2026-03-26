@@ -133,7 +133,7 @@ contract CelestiaDAProofValidatorTest is Test {
             uint64(validCert.length),
             validCert,
             bytes1(0x01),
-            bytes1(0x01),
+            bytes1(0x02),
             abi.encode(_attestationProof(certHeight, certDataRoot))
         );
         assertFalse(validator.validateCertificate(proof));
@@ -147,6 +147,15 @@ contract CelestiaDAProofValidatorTest is Test {
     function test_validateCertificate_malformedAttestationPayload_returnsFalse() public view {
         bytes memory proof =
             abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x01), hex"deadbeef");
+        assertFalse(validator.validateCertificate(proof));
+    }
+
+    function test_validateCertificate_malformedAttestationOffset_returnsFalse() public view {
+        bytes memory malformed = abi.encodePacked(
+            bytes32(uint256(1)), bytes32(uint256(certHeight)), bytes32(certDataRoot), bytes32(uint256(160))
+        );
+        bytes memory proof =
+            abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x01), malformed);
         assertFalse(validator.validateCertificate(proof));
     }
 

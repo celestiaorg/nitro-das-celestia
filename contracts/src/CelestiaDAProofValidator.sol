@@ -420,10 +420,8 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             return false;
         }
 
-        AttestationProof memory attestationProof;
-        try this.decodeAttestationProof(attestationProofData) returns (AttestationProof memory decoded) {
-            attestationProof = decoded;
-        } catch {
+        (bool decoded, AttestationProof memory attestationProof) = _tryDecodeAttestationProof(attestationProofData);
+        if (!decoded) {
             return false;
         }
 
@@ -442,10 +440,66 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         );
     }
 
-    /// @notice External helper for try/catch decoding of AttestationProof
-    /// @dev This allows validateCertificate to return false instead of reverting
-    function decodeAttestationProof(bytes calldata proofData) external pure returns (AttestationProof memory) {
-        return abi.decode(proofData, (AttestationProof));
+    function _tryDecodeAttestationProof(bytes calldata proofData)
+        internal
+        pure
+        returns (bool ok, AttestationProof memory decoded)
+    {
+        if (proofData.length < 32) {
+            return (false, decoded);
+        }
+
+        uint256 tupleOffset = _readWord(proofData, 0);
+        if (tupleOffset < 32 || tupleOffset % 32 != 0) {
+            return (false, decoded);
+        }
+        if (tupleOffset + 128 > proofData.length) {
+            return (false, decoded);
+        }
+
+        decoded.tupleRootNonce = _readWord(proofData, tupleOffset);
+        decoded.tuple.height = _readWord(proofData, tupleOffset + 32);
+        decoded.tuple.dataRoot = _readBytes32(proofData, tupleOffset + 64);
+
+        uint256 proofOffsetRel = _readWord(proofData, tupleOffset + 96);
+        if (proofOffsetRel < 128 || proofOffsetRel % 32 != 0) {
+            return (false, decoded);
+        }
+
+        uint256 proofOffset = tupleOffset + proofOffsetRel;
+        if (proofOffset + 96 > proofData.length) {
+            return (false, decoded);
+        }
+
+        uint256 sideNodesOffset = _readWord(proofData, proofOffset);
+        if (sideNodesOffset < 96 || sideNodesOffset % 32 != 0) {
+            return (false, decoded);
+        }
+
+        decoded.proof.key = _readWord(proofData, proofOffset + 32);
+        decoded.proof.numLeaves = _readWord(proofData, proofOffset + 64);
+
+        uint256 sideNodesStart = proofOffset + sideNodesOffset;
+        if (sideNodesStart + 32 > proofData.length) {
+            return (false, decoded);
+        }
+
+        uint256 sideNodesLen = _readWord(proofData, sideNodesStart);
+        uint256 sideNodesDataStart = sideNodesStart + 32;
+        uint256 sideNodesDataLen = sideNodesLen * 32;
+        if (sideNodesLen != 0 && sideNodesDataLen / 32 != sideNodesLen) {
+            return (false, decoded);
+        }
+        if (sideNodesDataStart + sideNodesDataLen > proofData.length) {
+            return (false, decoded);
+        }
+
+        decoded.proof.sideNodes = new bytes32[](sideNodesLen);
+        for (uint256 i = 0; i < sideNodesLen; i++) {
+            decoded.proof.sideNodes[i] = _readBytes32(proofData, sideNodesDataStart + i * 32);
+        }
+
+        return (true, decoded);
     }
 
     // =========================================================================
@@ -782,6 +836,18 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     /// @return The uint64 value
     function _readUint64(bytes calldata data, uint256 offset) internal pure returns (uint256) {
         return uint256(uint64(bytes8(data[offset:offset + UINT64_SIZE])));
+    }
+
+    function _readWord(bytes calldata data, uint256 offset) internal pure returns (uint256 value) {
+        assembly {
+            value := calldataload(add(data.offset, offset))
+        }
+    }
+
+    function _readBytes32(bytes calldata data, uint256 offset) internal pure returns (bytes32 value) {
+        assembly {
+            value := calldataload(add(data.offset, offset))
+        }
     }
 
     /// @notice Reads a uint16 from calldata at the given offset

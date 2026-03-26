@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/offchainlabs/nitro/daprovider"
 	"github.com/stretchr/testify/require"
 )
 
@@ -965,6 +966,7 @@ func TestGenerateReadPreimageProof_VerifyAttestationFalseReturnsError(t *testing
 
 	_, err := fixture.celestiaDA.GenerateReadPreimageProof(context.Background(), 0, fixture.certificate)
 	require.ErrorContains(t, err, "certificate validation failed")
+	require.True(t, daprovider.IsCertificateValidationError(err))
 }
 
 func TestGenerateReadPreimageProof_HeaderDataRootMismatchReturnsError(t *testing.T) {

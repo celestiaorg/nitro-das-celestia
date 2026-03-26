@@ -1126,7 +1126,7 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 		return nil, err
 	}
 	if len(proofData) == 0 {
-		return nil, fmt.Errorf("certificate validation failed")
+		return nil, certificateValidationError("blobstream attestation invalid")
 	}
 
 	var payloadSizeProofData []byte
@@ -1136,7 +1136,7 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 			return nil, err
 		}
 		if len(payloadSizeProofData) == 0 {
-			return nil, fmt.Errorf("certificate validation failed")
+			return nil, certificateValidationError("blobstream attestation invalid")
 		}
 	}
 

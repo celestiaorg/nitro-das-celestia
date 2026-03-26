@@ -17,7 +17,7 @@ contract CelestiaDAProofValidatorTest is Test {
     CelestiaDAProofValidator internal validator;
 
     uint64 internal certHeight = 100;
-    uint64 internal certStart = 20;
+    uint64 internal certStart = 0;
     uint64 internal certSharesLength = 2;
 
     bytes internal share0;
@@ -275,6 +275,13 @@ contract CelestiaDAProofValidatorTest is Test {
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
 
+    function test_validateReadPreimage_wrongSharePosition_reverts() public {
+        uint64 offset = 480;
+        bytes memory proof = _buildReadProofWithMismatchedProvedShare(offset, uint64(payload.length));
+        vm.expectRevert("Invalid proved share position");
+        validator.validateReadPreimage(keccak256(validCert), offset, proof);
+    }
+
     function test_validateReadPreimage_wrongOffset_reverts() public {
         uint64 offset = 64;
         bytes memory proof = _buildReadProofWithOffset(offset, uint64(payload.length), offset + 32);
@@ -510,6 +517,80 @@ contract CelestiaDAProofValidatorTest is Test {
             bytes1(chunkLen),
             bytes8(firstShareIndex),
             bytes1(shareCount),
+            bytes8(uint64(payloadSizeProofData.length)),
+            payloadSizeProofData,
+            abi.encode(address(mockBlobstream), sharesProof)
+        );
+        return abi.encodePacked(bytes8(uint64(validCert.length)), validCert, custom);
+    }
+
+    function _buildReadProofWithMismatchedProvedShare(uint64 offset, uint64 payloadSize)
+        internal
+        view
+        returns (bytes memory)
+    {
+        DataRootTuple memory tuple = DataRootTuple({height: certHeight, dataRoot: certDataRoot});
+
+        bytes memory rowRootBytes1 = abi.encodePacked(rowRoot1.min.toBytes(), rowRoot1.max.toBytes(), rowRoot1.digest);
+        bytes32 digest1 = leafDigest(rowRootBytes1);
+
+        uint8 chunkLen = expectedChunkLen(offset, payloadSize);
+        uint64 encodedFirstShareIndex = certStart + _payloadOffsetToShareRel(offset);
+        require(encodedFirstShareIndex == certStart + 1, "test setup expects continuation share");
+
+        bytes[] memory data = new bytes[](1);
+        data[0] = share0;
+
+        NamespaceMerkleMultiproof[] memory shareProofs = new NamespaceMerkleMultiproof[](1);
+        NamespaceNode[] memory noSide = new NamespaceNode[](0);
+        shareProofs[0] = NamespaceMerkleMultiproof({beginKey: 0, endKey: 1, sideNodes: noSide});
+
+        NamespaceNode[] memory rowRoots = new NamespaceNode[](1);
+        rowRoots[0] = rowRoot0;
+        BinaryMerkleProof[] memory rowProofs = new BinaryMerkleProof[](1);
+        bytes32[] memory side0 = new bytes32[](1);
+        side0[0] = digest1;
+        rowProofs[0] = BinaryMerkleProof({sideNodes: side0, key: 0, numLeaves: 2});
+
+        BinaryMerkleProof memory tupleProof = BinaryMerkleProof({sideNodes: new bytes32[](0), key: 0, numLeaves: 1});
+
+        SharesProof memory sharesProof = SharesProof({
+            data: data,
+            shareProofs: shareProofs,
+            namespace: ns,
+            rowRoots: rowRoots,
+            rowProofs: rowProofs,
+            attestationProof: AttestationProof({tupleRootNonce: 1, tuple: tuple, proof: tupleProof})
+        });
+
+        bytes[] memory payloadSizeData = new bytes[](1);
+        payloadSizeData[0] = share0;
+        NamespaceMerkleMultiproof[] memory payloadSizeShareProofs = new NamespaceMerkleMultiproof[](1);
+        payloadSizeShareProofs[0] = NamespaceMerkleMultiproof({beginKey: 0, endKey: 1, sideNodes: noSide});
+        NamespaceNode[] memory payloadSizeRowRoots = new NamespaceNode[](1);
+        payloadSizeRowRoots[0] = rowRoot0;
+        BinaryMerkleProof[] memory payloadSizeRowProofs = new BinaryMerkleProof[](1);
+        bytes32[] memory payloadSizeSide = new bytes32[](1);
+        payloadSizeSide[0] = digest1;
+        payloadSizeRowProofs[0] = BinaryMerkleProof({sideNodes: payloadSizeSide, key: 0, numLeaves: 2});
+
+        SharesProof memory payloadSizeProof = SharesProof({
+            data: payloadSizeData,
+            shareProofs: payloadSizeShareProofs,
+            namespace: ns,
+            rowRoots: payloadSizeRowRoots,
+            rowProofs: payloadSizeRowProofs,
+            attestationProof: AttestationProof({tupleRootNonce: 1, tuple: tuple, proof: tupleProof})
+        });
+
+        bytes memory payloadSizeProofData = abi.encode(address(mockBlobstream), payloadSizeProof);
+        bytes memory custom = abi.encodePacked(
+            bytes1(0x01),
+            bytes8(offset),
+            bytes8(payloadSize),
+            bytes1(chunkLen),
+            bytes8(encodedFirstShareIndex),
+            bytes1(uint8(1)),
             bytes8(uint64(payloadSizeProofData.length)),
             payloadSizeProofData,
             abi.encode(address(mockBlobstream), sharesProof)

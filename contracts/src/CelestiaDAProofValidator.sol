@@ -337,6 +337,9 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
 
         (bool valid,) = DAVerifier.verifySharesToDataRootTupleRoot(IDAOracle(blobstreamX), sharesProof);
         require(valid, "Invalid Celestia shares inclusion proof");
+        _validateProvedSharePositions(
+            header.firstShareIndexInBlob, header.shareCount, sharesProof.shareProofs, sharesProof.rowProofs
+        );
 
         if (header.firstShareIndexInBlob == certData.start) {
             require(sharesProof.data.length > 0, "Shares count mismatch");
@@ -360,6 +363,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             (bool payloadSizeProofValid,) =
                 DAVerifier.verifySharesToDataRootTupleRoot(IDAOracle(blobstreamX), payloadSizeProof);
             require(payloadSizeProofValid, "Invalid payload size inclusion proof");
+            _validateProvedSharePositions(certData.start, 1, payloadSizeProof.shareProofs, payloadSizeProof.rowProofs);
             require(payloadSizeProof.data.length == 1, "Invalid payload size proof share count");
             require(payloadSizeProof.data[0].length == CELESTIA_SHARE_SIZE, "Invalid share length");
             require(header.payloadSize == _decodeSequenceLen(payloadSizeProof.data[0]), "Payload size mismatch");
@@ -561,6 +565,48 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
             firstShareIndexInBlob + shareCount <= certData.start + certData.sharesLength, "Share index past cert range"
         );
         require(shareCount == 1 || shareCount == 2, "Invalid shareCount");
+    }
+
+    function _validateProvedSharePositions(
+        uint256 firstShareIndexInBlob,
+        uint256 shareCount,
+        NamespaceMerkleMultiproof[] memory shareProofs,
+        BinaryMerkleProof[] memory rowProofs
+    ) internal pure {
+        require(shareProofs.length == rowProofs.length, "Invalid proved share position");
+
+        uint256 currentShareIndex = firstShareIndexInBlob;
+        uint256 totalShares;
+        uint256 rowWidth;
+
+        for (uint256 i = 0; i < shareProofs.length; i++) {
+            uint256 numLeaves = rowProofs[i].numLeaves;
+            require(numLeaves >= 2 && numLeaves % 2 == 0, "Invalid proved share position");
+
+            uint256 currentRowWidth = numLeaves / 2;
+            if (i == 0) {
+                rowWidth = currentRowWidth;
+            } else {
+                require(currentRowWidth == rowWidth, "Invalid proved share position");
+            }
+
+            uint256 beginKey = shareProofs[i].beginKey;
+            uint256 endKey = shareProofs[i].endKey;
+            require(endKey > beginKey && endKey <= rowWidth, "Invalid proved share position");
+
+            uint256 sharesInProof = endKey - beginKey;
+            require(totalShares + sharesInProof <= shareCount, "Invalid proved share position");
+
+            uint256 expectedRow = currentShareIndex / rowWidth;
+            uint256 expectedBeginKey = currentShareIndex % rowWidth;
+            require(rowProofs[i].key == expectedRow, "Invalid proved share position");
+            require(beginKey == expectedBeginKey, "Invalid proved share position");
+
+            currentShareIndex += sharesInProof;
+            totalShares += sharesInProof;
+        }
+
+        require(totalShares == shareCount, "Invalid proved share position");
     }
 
     // =========================================================================

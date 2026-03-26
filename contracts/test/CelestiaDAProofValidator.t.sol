@@ -286,10 +286,27 @@ contract CelestiaDAProofValidatorTest is Test {
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
 
+    function test_validateReadPreimage_wrongPayloadSizeProofBlobstreamAddress_reverts() public {
+        uint64 offset = 480;
+        bytes memory proof = _buildReadProof(offset, uint64(payload.length), false, false);
+        uint256 proofStart = 8 + validCert.length;
+        uint256 payloadSizeBlobstreamAddrOffset = proofStart + 35 + 12;
+        proof[payloadSizeBlobstreamAddrOffset] = bytes1(uint8(proof[payloadSizeBlobstreamAddrOffset]) ^ 0x01);
+        vm.expectRevert("Blobstream address mismatch");
+        validator.validateReadPreimage(keccak256(validCert), offset, proof);
+    }
+
     function test_validateReadPreimage_badSharesProof_reverts() public {
         uint64 offset = 64;
         bytes memory proof = _buildReadProof(offset, uint64(payload.length), true, false);
         vm.expectRevert("Invalid Celestia shares inclusion proof");
+        validator.validateReadPreimage(keccak256(validCert), offset, proof);
+    }
+
+    function test_validateReadPreimage_badPayloadSizeProof_reverts() public {
+        uint64 offset = 480;
+        bytes memory proof = _buildReadProofWithBadPayloadSizeProof(offset, uint64(payload.length));
+        vm.expectRevert("Invalid payload size inclusion proof");
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
 
@@ -320,6 +337,13 @@ contract CelestiaDAProofValidatorTest is Test {
     function test_validateReadPreimage_wrongSharePosition_reverts() public {
         uint64 offset = 480;
         bytes memory proof = _buildReadProofWithMismatchedProvedShare(offset, uint64(payload.length));
+        vm.expectRevert("Invalid proved share position");
+        validator.validateReadPreimage(keccak256(validCert), offset, proof);
+    }
+
+    function test_validateReadPreimage_payloadSizeProofWrongSharePosition_reverts() public {
+        uint64 offset = 480;
+        bytes memory proof = _buildReadProofWithMismatchedPayloadSizeShare(offset, uint64(payload.length));
         vm.expectRevert("Invalid proved share position");
         validator.validateReadPreimage(keccak256(validCert), offset, proof);
     }
@@ -651,6 +675,103 @@ contract CelestiaDAProofValidatorTest is Test {
             bytes8(uint64(payloadSizeProofData.length)),
             payloadSizeProofData,
             abi.encode(address(mockBlobstream), sharesProof)
+        );
+        return abi.encodePacked(bytes8(uint64(validCert.length)), validCert, custom);
+    }
+
+    function _buildReadProofWithBadPayloadSizeProof(uint64 offset, uint64 payloadSize)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _buildReadProofWithCustomPayloadSizeProof(offset, payloadSize, true, false);
+    }
+
+    function _buildReadProofWithMismatchedPayloadSizeShare(uint64 offset, uint64 payloadSize)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _buildReadProofWithCustomPayloadSizeProof(offset, payloadSize, false, true);
+    }
+
+    function _buildReadProofWithCustomPayloadSizeProof(uint64 offset, uint64 payloadSize, bool tamperProof, bool wrongPosition)
+        internal
+        view
+        returns (bytes memory)
+    {
+        require(offset >= 478, "test setup expects continuation share");
+
+        DataRootTuple memory tuple = DataRootTuple({height: certHeight, dataRoot: certDataRoot});
+
+        bytes memory rowRootBytes0 = abi.encodePacked(rowRoot0.min.toBytes(), rowRoot0.max.toBytes(), rowRoot0.digest);
+        bytes memory rowRootBytes1 = abi.encodePacked(rowRoot1.min.toBytes(), rowRoot1.max.toBytes(), rowRoot1.digest);
+        bytes memory colRootBytes0 = abi.encodePacked(colRoot0.min.toBytes(), colRoot0.max.toBytes(), colRoot0.digest);
+        bytes memory colRootBytes1 = abi.encodePacked(colRoot1.min.toBytes(), colRoot1.max.toBytes(), colRoot1.digest);
+        bytes32 digest0 = leafDigest(rowRootBytes0);
+        bytes32 digest1 = leafDigest(rowRootBytes1);
+        bytes32 upperHalf = nodeDigest(leafDigest(colRootBytes0), leafDigest(colRootBytes1));
+
+        bytes memory fullProof = _buildReadProof(offset, payloadSize, false, false);
+        uint256 proofStart = 8 + validCert.length;
+        uint256 payloadSizeProofLen;
+        for (uint256 i = 0; i < 8; i++) {
+            payloadSizeProofLen = (payloadSizeProofLen << 8) | uint8(fullProof[proofStart + 27 + i]);
+        }
+        uint256 mainSharesProofStart = proofStart + 35 + payloadSizeProofLen;
+        bytes memory mainSharesProofData = new bytes(fullProof.length - mainSharesProofStart);
+        for (uint256 i = 0; i < mainSharesProofData.length; i++) {
+            mainSharesProofData[i] = fullProof[mainSharesProofStart + i];
+        }
+        uint8 chunkLen = expectedChunkLen(offset, payloadSize);
+        uint64 firstShareIndex = certStart + _payloadOffsetToShareRel(offset);
+
+        bytes[] memory payloadSizeData = new bytes[](1);
+        payloadSizeData[0] = wrongPosition ? share1 : share0;
+        if (tamperProof) {
+            payloadSizeData[0][40] = bytes1(uint8(payloadSizeData[0][40]) ^ 0x01);
+        }
+
+        NamespaceNode[] memory noSide = new NamespaceNode[](0);
+        NamespaceMerkleMultiproof[] memory payloadSizeShareProofs = new NamespaceMerkleMultiproof[](1);
+        payloadSizeShareProofs[0] = NamespaceMerkleMultiproof({beginKey: 0, endKey: 1, sideNodes: noSide});
+
+        NamespaceNode[] memory payloadSizeRowRoots = new NamespaceNode[](1);
+        payloadSizeRowRoots[0] = wrongPosition ? rowRoot1 : rowRoot0;
+
+        BinaryMerkleProof[] memory payloadSizeRowProofs = new BinaryMerkleProof[](1);
+        bytes32[] memory payloadSizeSide = new bytes32[](2);
+        if (wrongPosition) {
+            payloadSizeSide[0] = digest0;
+            payloadSizeSide[1] = upperHalf;
+            payloadSizeRowProofs[0] = BinaryMerkleProof({sideNodes: payloadSizeSide, key: 1, numLeaves: 4});
+        } else {
+            payloadSizeSide[0] = digest1;
+            payloadSizeSide[1] = upperHalf;
+            payloadSizeRowProofs[0] = BinaryMerkleProof({sideNodes: payloadSizeSide, key: 0, numLeaves: 4});
+        }
+
+        BinaryMerkleProof memory tupleProof = BinaryMerkleProof({sideNodes: new bytes32[](0), key: 0, numLeaves: 1});
+        SharesProof memory payloadSizeProof = SharesProof({
+            data: payloadSizeData,
+            shareProofs: payloadSizeShareProofs,
+            namespace: ns,
+            rowRoots: payloadSizeRowRoots,
+            rowProofs: payloadSizeRowProofs,
+            attestationProof: AttestationProof({tupleRootNonce: 1, tuple: tuple, proof: tupleProof})
+        });
+
+        bytes memory payloadSizeProofData = abi.encode(address(mockBlobstream), payloadSizeProof);
+        bytes memory custom = abi.encodePacked(
+            bytes1(0x01),
+            bytes8(offset),
+            bytes8(payloadSize),
+            bytes1(chunkLen),
+            bytes8(firstShareIndex),
+            bytes1(uint8(1)),
+            bytes8(uint64(payloadSizeProofData.length)),
+            payloadSizeProofData,
+            mainSharesProofData
         );
         return abi.encodePacked(bytes8(uint64(validCert.length)), validCert, custom);
     }

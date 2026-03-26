@@ -453,7 +453,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         if (tupleOffset < 32 || tupleOffset % 32 != 0) {
             return (false, decoded);
         }
-        if (tupleOffset + 128 > proofData.length) {
+        if (proofData.length < 128 || tupleOffset > proofData.length - 128) {
             return (false, decoded);
         }
 
@@ -465,14 +465,17 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         if (proofOffsetRel < 128 || proofOffsetRel % 32 != 0) {
             return (false, decoded);
         }
-
-        uint256 proofOffset = tupleOffset + proofOffsetRel;
-        if (proofOffset + 96 > proofData.length) {
+        if (proofOffsetRel > proofData.length - tupleOffset || proofOffsetRel > proofData.length - tupleOffset - 96) {
             return (false, decoded);
         }
 
+        uint256 proofOffset = tupleOffset + proofOffsetRel;
+
         uint256 sideNodesOffset = _readWord(proofData, proofOffset);
         if (sideNodesOffset < 96 || sideNodesOffset % 32 != 0) {
+            return (false, decoded);
+        }
+        if (sideNodesOffset > proofData.length - proofOffset || sideNodesOffset > proofData.length - proofOffset - 32) {
             return (false, decoded);
         }
 
@@ -480,17 +483,9 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         decoded.proof.numLeaves = _readWord(proofData, proofOffset + 64);
 
         uint256 sideNodesStart = proofOffset + sideNodesOffset;
-        if (sideNodesStart + 32 > proofData.length) {
-            return (false, decoded);
-        }
-
         uint256 sideNodesLen = _readWord(proofData, sideNodesStart);
         uint256 sideNodesDataStart = sideNodesStart + 32;
-        uint256 sideNodesDataLen = sideNodesLen * 32;
-        if (sideNodesLen != 0 && sideNodesDataLen / 32 != sideNodesLen) {
-            return (false, decoded);
-        }
-        if (sideNodesDataStart + sideNodesDataLen > proofData.length) {
+        if (sideNodesLen > (proofData.length - sideNodesDataStart) / 32) {
             return (false, decoded);
         }
 

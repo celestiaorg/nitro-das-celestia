@@ -159,6 +159,30 @@ contract CelestiaDAProofValidatorTest is Test {
         assertFalse(validator.validateCertificate(proof));
     }
 
+    function test_validateCertificate_malformedAttestationHugeOffset_returnsFalse() public view {
+        bytes memory malformed = abi.encodePacked(bytes32(type(uint256).max - 31));
+        bytes memory proof =
+            abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x01), malformed);
+        assertFalse(validator.validateCertificate(proof));
+    }
+
+    function test_validateCertificate_malformedAttestationHugeSideNodesLength_returnsFalse() public view {
+        bytes memory malformed = abi.encodePacked(
+            bytes32(uint256(32)), // outer tuple offset
+            bytes32(uint256(1)), // tupleRootNonce
+            bytes32(uint256(certHeight)),
+            bytes32(certDataRoot),
+            bytes32(uint256(128)), // proof offset relative to tuple start
+            bytes32(uint256(96)), // sideNodes offset relative to proof start
+            bytes32(uint256(0)), // proof key
+            bytes32(uint256(1)), // proof numLeaves
+            bytes32(type(uint256).max / 32 + 1) // sideNodes length overflow trigger
+        );
+        bytes memory proof =
+            abi.encodePacked(uint64(validCert.length), validCert, bytes1(0x01), bytes1(0x01), malformed);
+        assertFalse(validator.validateCertificate(proof));
+    }
+
     function test_validateCertificate_wrongTupleHeight_returnsFalse() public view {
         bytes memory proof =
             _buildValidityProof(validCert, _attestationProof(certHeight + 1, certDataRoot), bytes1(0x01));

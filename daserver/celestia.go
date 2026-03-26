@@ -1129,12 +1129,24 @@ func (c *CelestiaDA) GenerateReadPreimageProof(ctx context.Context, offset uint6
 		return nil, fmt.Errorf("certificate validation failed")
 	}
 
+	var payloadSizeProofData []byte
+	if plan.firstShareIndex != certificate.Start {
+		payloadSizeProofData, err = c.generateCelestiaProof(ctx, certificate, certificate.Start, certificate.Start+1)
+		if err != nil {
+			return nil, err
+		}
+		if len(payloadSizeProofData) == 0 {
+			return nil, fmt.Errorf("certificate validation failed")
+		}
+	}
+
 	return buildReadPreimageProofV1(
 		offset,
 		payloadSize,
 		plan.chunkLen,
 		plan.firstShareIndex,
 		uint8(plan.shareCount),
+		payloadSizeProofData,
 		proofData,
 	), nil
 }
@@ -1145,11 +1157,12 @@ func buildReadPreimageProofV1(
 	chunkLen uint8,
 	firstShareIndex uint64,
 	shareCount uint8,
+	payloadSizeProofData []byte,
 	sharesProofData []byte,
 ) []byte {
 	// Custom proof format (proof enhancer prepends cert metadata at challenge time):
-	// [version(1)=0x01][offset(8)][payloadSize(8)][chunkLen(1)][firstShareIndexInBlob(8)][shareCount(1)][celestiaSharesProofData]
-	totalLen := 1 + 8 + 8 + 1 + 8 + 1 + len(sharesProofData)
+	// [version(1)=0x01][offset(8)][payloadSize(8)][chunkLen(1)][firstShareIndexInBlob(8)][shareCount(1)][payloadSizeProofLen(8)][payloadSizeProofData][celestiaSharesProofData]
+	totalLen := 1 + 8 + 8 + 1 + 8 + 1 + 8 + len(payloadSizeProofData) + len(sharesProofData)
 	proof := make([]byte, totalLen)
 	pos := 0
 
@@ -1165,6 +1178,10 @@ func buildReadPreimageProofV1(
 	pos += 8
 	proof[pos] = shareCount
 	pos++
+	binary.BigEndian.PutUint64(proof[pos:], uint64(len(payloadSizeProofData)))
+	pos += 8
+	copy(proof[pos:], payloadSizeProofData)
+	pos += len(payloadSizeProofData)
 	copy(proof[pos:], sharesProofData)
 	return proof
 }

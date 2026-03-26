@@ -60,7 +60,10 @@ import "../lib/DAVerifier.sol";
 /// | chunkLen                  | 17     | 1    | uint8             |
 /// | firstShareIndexInBlob     | 18     | 8    | uint64            |
 /// | shareCount                | 26     | 1    | uint8             |
-/// | sharesProof               | 27     | var  | abi.encode(addr,  |
+/// | payloadSizeProofLen       | 27     | 8    | uint64            |
+/// | payloadSizeProof          | 35     | var  | abi.encode(addr,  |
+/// |                           |        |      |   SharesProof)    |
+/// | sharesProof               | var    | var  | abi.encode(addr,  |
 /// |                           |        |      |   SharesProof)    |
 /// +---------------------------+--------+------+-------------------+
 ///
@@ -100,7 +103,6 @@ import "../lib/DAVerifier.sol";
 ///      `txCommitment` is carried in the certificate format but is not independently
 ///      re-derived or enforced in Solidity.
 contract CelestiaDAProofValidator is ICustomDAProofValidator {
-
     // =========================================================================
     //                          CERTIFICATE CONSTANTS
     // =========================================================================
@@ -141,9 +143,9 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     /// @notice Version byte for validity proofs
     uint8 private constant VALIDITY_PROOF_VERSION = 0x01;
 
-    /// @notice Total length of read proof header before sharesProof data
-    /// @dev 1 (version) + 8 (offset) + 8 (payloadSize) + 1 (chunkLen) + 8 (firstShareIndexInBlob) + 1 (shareCount) = 27
-    uint256 private constant READ_PROOF_HEADER_LEN = 27;
+    /// @notice Total length of read proof header before proof bodies
+    /// @dev 1 (version) + 8 (offset) + 8 (payloadSize) + 1 (chunkLen) + 8 (firstShareIndexInBlob) + 1 (shareCount) + 8 (payloadSizeProofLen) = 35
+    uint256 private constant READ_PROOF_HEADER_LEN = 35;
 
     /// @notice Read proof header field offsets (after version byte)
     uint256 private constant READ_PROOF_OFFSET_FIELD = 1;
@@ -151,6 +153,7 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     uint256 private constant READ_PROOF_CHUNK_LEN_FIELD = 17;
     uint256 private constant READ_PROOF_FIRST_SHARE_INDEX_FIELD = 18;
     uint256 private constant READ_PROOF_SHARE_COUNT_FIELD = 26;
+    uint256 private constant READ_PROOF_PAYLOAD_SIZE_PROOF_LEN_FIELD = 27;
 
     // =========================================================================
     //                        CELESTIA SHARE CONSTANTS
@@ -174,7 +177,8 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
 
     /// @notice Offset where payload data starts in first share
     /// @dev = namespace_size + info_size + sequence_len_size = 29 + 1 + 4 = 34
-    uint256 private constant CELESTIA_FIRST_SHARE_PAYLOAD_START = CELESTIA_SEQUENCE_LEN_OFFSET + CELESTIA_SEQUENCE_LEN_SIZE;
+    uint256 private constant CELESTIA_FIRST_SHARE_PAYLOAD_START =
+        CELESTIA_SEQUENCE_LEN_OFFSET + CELESTIA_SEQUENCE_LEN_SIZE;
 
     /// @notice Offset where payload data starts in continuation shares
     /// @dev = namespace_size + info_size = 29 + 1 = 30
@@ -276,7 +280,9 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     ///       * chunkLen (1 byte)
     ///       * firstShareIndexInBlob (8 bytes)
     ///       * shareCount (1 byte)
-    ///       * abi.encode(address, SharesProof)
+    ///       * payloadSizeProofLen (8 bytes)
+    ///       * abi.encode(address, SharesProof) for payloadSizeProof (first share only)
+    ///       * abi.encode(address, SharesProof) for sharesProof (requested chunk shares)
     function validateReadPreimage(bytes32 certHash, uint256 offset, bytes calldata proof)
         external
         view
@@ -305,11 +311,18 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         _validateShareRange(certData, offset, header.firstShareIndexInBlob, header.shareCount);
 
         // Verify the shares inclusion proof via Blobstream
-        bytes calldata sharesProofData = customProof[READ_PROOF_HEADER_LEN:];
+        uint256 payloadSizeProofLen = _readUint64(customProof, READ_PROOF_PAYLOAD_SIZE_PROOF_LEN_FIELD);
+        uint256 payloadSizeProofStart = READ_PROOF_HEADER_LEN;
+        uint256 payloadSizeProofEnd = payloadSizeProofStart + payloadSizeProofLen;
+        require(customProof.length >= payloadSizeProofEnd, "Payload size proof truncated");
+
+        bytes calldata payloadSizeProofData = customProof[payloadSizeProofStart:payloadSizeProofEnd];
+        bytes calldata sharesProofData = customProof[payloadSizeProofEnd:];
         require(sharesProofData.length > 0, "Missing shares proof data");
 
-        (address encodedBlobstream, SharesProof memory sharesProof) =
-            abi.decode(sharesProofData, (address, SharesProof));
+        address encodedBlobstream;
+        SharesProof memory sharesProof;
+        (encodedBlobstream, sharesProof) = abi.decode(sharesProofData, (address, SharesProof));
         require(encodedBlobstream == blobstreamX, "Blobstream address mismatch");
 
         // Verify the shares proof matches the certificate data
@@ -324,6 +337,33 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
 
         (bool valid,) = DAVerifier.verifySharesToDataRootTupleRoot(IDAOracle(blobstreamX), sharesProof);
         require(valid, "Invalid Celestia shares inclusion proof");
+
+        if (header.firstShareIndexInBlob == certData.start) {
+            require(sharesProof.data.length > 0, "Shares count mismatch");
+            require(header.payloadSize == _decodeSequenceLen(sharesProof.data[0]), "Payload size mismatch");
+        } else {
+            require(payloadSizeProofData.length > 0, "Missing payload size proof data");
+
+            SharesProof memory payloadSizeProof;
+            (encodedBlobstream, payloadSizeProof) = abi.decode(payloadSizeProofData, (address, SharesProof));
+            require(encodedBlobstream == blobstreamX, "Blobstream address mismatch");
+
+            require(
+                payloadSizeProof.attestationProof.tuple.height == certData.blockHeight,
+                "Payload size proof height does not match certificate blockHeight"
+            );
+            require(
+                payloadSizeProof.attestationProof.tuple.dataRoot == certData.dataRoot,
+                "Payload size proof dataRoot does not match certificate dataRoot"
+            );
+
+            (bool payloadSizeProofValid,) =
+                DAVerifier.verifySharesToDataRootTupleRoot(IDAOracle(blobstreamX), payloadSizeProof);
+            require(payloadSizeProofValid, "Invalid payload size inclusion proof");
+            require(payloadSizeProof.data.length == 1, "Invalid payload size proof share count");
+            require(payloadSizeProof.data[0].length == CELESTIA_SHARE_SIZE, "Invalid share length");
+            require(header.payloadSize == _decodeSequenceLen(payloadSizeProof.data[0]), "Payload size mismatch");
+        }
 
         // Validate shares data
         require(sharesProof.data.length == header.shareCount, "Shares count mismatch");
@@ -517,7 +557,9 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
 
         require(firstShareIndexInBlob == expectedFirstShareIndex, "Invalid firstShareIndexInBlob");
         require(firstShareIndexInBlob >= certData.start, "Share index before cert range");
-        require(firstShareIndexInBlob + shareCount <= certData.start + certData.sharesLength, "Share index past cert range");
+        require(
+            firstShareIndexInBlob + shareCount <= certData.start + certData.sharesLength, "Share index past cert range"
+        );
         require(shareCount == 1 || shareCount == 2, "Invalid shareCount");
     }
 
@@ -578,12 +620,11 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
     /// @param chunkLen The number of bytes to extract
     /// @param payloadSize The total size of the payload
     /// @return out The extracted chunk bytes
-    function _extractChunk(
-        SharesProof memory sharesProof,
-        uint256 offset,
-        uint256 chunkLen,
-        uint256 payloadSize
-    ) internal pure returns (bytes memory out) {
+    function _extractChunk(SharesProof memory sharesProof, uint256 offset, uint256 chunkLen, uint256 payloadSize)
+        internal
+        pure
+        returns (bytes memory out)
+    {
         // Calculate which share within the certificate we're reading from
         uint256 firstRel = _payloadOffsetToShareRel(offset);
 
@@ -591,11 +632,6 @@ contract CelestiaDAProofValidator is ICustomDAProofValidator {
         bytes memory firstShare = sharesProof.data[0];
         uint256 firstSharePayloadOffset = _payloadDataStartInShare(firstRel);
         require(firstShare.length >= firstSharePayloadOffset, "Invalid share header");
-
-        // For the first share in the certificate, verify the sequence length matches payloadSize
-        if (firstRel == 0) {
-            require(payloadSize == _decodeSequenceLen(firstShare), "Payload size mismatch");
-        }
 
         // Handle empty chunk case
         if (chunkLen == 0) {

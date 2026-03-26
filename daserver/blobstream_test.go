@@ -47,10 +47,11 @@ func TestBuildReadPreimageProofV1_Layout(t *testing.T) {
 	chunkLen := uint8(32)
 	firstShareIndex := uint64(25)
 	shareCount := uint8(1)
+	payloadSizeProof := []byte{0xca, 0xfe}
 	trailer := []byte{0xde, 0xad, 0xbe, 0xef}
 
-	proof := buildReadPreimageProofV1(offset, payloadSize, chunkLen, firstShareIndex, shareCount, trailer)
-	require.Len(t, proof, 1+8+8+1+8+1+len(trailer))
+	proof := buildReadPreimageProofV1(offset, payloadSize, chunkLen, firstShareIndex, shareCount, payloadSizeProof, trailer)
+	require.Len(t, proof, 1+8+8+1+8+1+8+len(payloadSizeProof)+len(trailer))
 
 	pos := 0
 	require.Equal(t, byte(0x01), proof[pos])
@@ -65,6 +66,10 @@ func TestBuildReadPreimageProofV1_Layout(t *testing.T) {
 	pos += 8
 	require.Equal(t, shareCount, proof[pos])
 	pos++
+	require.EqualValues(t, len(payloadSizeProof), binary.BigEndian.Uint64(proof[pos:pos+8]))
+	pos += 8
+	require.Equal(t, payloadSizeProof, proof[pos:pos+len(payloadSizeProof)])
+	pos += len(payloadSizeProof)
 	require.Equal(t, trailer, proof[pos:])
 }
 
@@ -998,16 +1003,17 @@ func TestGenerateReadPreimageProof_SuccessLayoutBoundaries(t *testing.T) {
 
 	fixture := newReadPreimageFixtureWithMessage(t, bytes.Repeat([]byte("a"), 1456))
 	cases := []struct {
-		name           string
-		offset         uint64
-		wantChunkLen   uint8
-		wantShareIndex uint64
-		wantShareCount uint8
+		name             string
+		offset           uint64
+		wantChunkLen     uint8
+		wantShareIndex   uint64
+		wantShareCount   uint8
+		wantPayloadProof bool
 	}{
-		{name: "offset_0", offset: 0, wantChunkLen: 32, wantShareIndex: fixture.certificate.Start, wantShareCount: 1},
-		{name: "offset_448", offset: 448, wantChunkLen: 32, wantShareIndex: fixture.certificate.Start, wantShareCount: 2},
-		{name: "offset_480", offset: 480, wantChunkLen: 32, wantShareIndex: fixture.certificate.Start + 1, wantShareCount: 1},
-		{name: "offset_1440", offset: 1440, wantChunkLen: 16, wantShareIndex: fixture.certificate.Start + 2, wantShareCount: 2},
+		{name: "offset_0", offset: 0, wantChunkLen: 32, wantShareIndex: fixture.certificate.Start, wantShareCount: 1, wantPayloadProof: false},
+		{name: "offset_448", offset: 448, wantChunkLen: 32, wantShareIndex: fixture.certificate.Start, wantShareCount: 2, wantPayloadProof: false},
+		{name: "offset_480", offset: 480, wantChunkLen: 32, wantShareIndex: fixture.certificate.Start + 1, wantShareCount: 1, wantPayloadProof: true},
+		{name: "offset_1440", offset: 1440, wantChunkLen: 16, wantShareIndex: fixture.certificate.Start + 2, wantShareCount: 2, wantPayloadProof: true},
 	}
 
 	for _, tc := range cases {
@@ -1015,13 +1021,19 @@ func TestGenerateReadPreimageProof_SuccessLayoutBoundaries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			proof, err := fixture.celestiaDA.GenerateReadPreimageProof(context.Background(), tc.offset, fixture.certificate)
 			require.NoError(t, err)
-			require.Greater(t, len(proof), 27)
+			require.Greater(t, len(proof), 35)
 			require.Equal(t, byte(0x01), proof[0])
 			require.EqualValues(t, tc.offset, binary.BigEndian.Uint64(proof[1:9]))
 			require.EqualValues(t, 1456, binary.BigEndian.Uint64(proof[9:17]))
 			require.Equal(t, tc.wantChunkLen, proof[17])
 			require.EqualValues(t, tc.wantShareIndex, binary.BigEndian.Uint64(proof[18:26]))
 			require.Equal(t, tc.wantShareCount, proof[26])
+			payloadProofLen := binary.BigEndian.Uint64(proof[27:35])
+			if tc.wantPayloadProof {
+				require.Positive(t, payloadProofLen)
+			} else {
+				require.Zero(t, payloadProofLen)
+			}
 		})
 	}
 }
@@ -1051,11 +1063,12 @@ func TestGenerateReadPreimageProof_OffsetAtPayloadEndReturnsZeroLengthChunkProof
 
 	proof, err := fixture.celestiaDA.GenerateReadPreimageProof(context.Background(), 32, fixture.certificate)
 	require.NoError(t, err)
-	require.Greater(t, len(proof), 27)
+	require.Greater(t, len(proof), 35)
 	require.Equal(t, byte(0x01), proof[0])
 	require.EqualValues(t, 32, binary.BigEndian.Uint64(proof[1:9]))
 	require.EqualValues(t, 32, binary.BigEndian.Uint64(proof[9:17]))
 	require.Equal(t, byte(0), proof[17])
 	require.EqualValues(t, fixture.certificate.Start, binary.BigEndian.Uint64(proof[18:26]))
 	require.Equal(t, byte(1), proof[26])
+	require.Zero(t, binary.BigEndian.Uint64(proof[27:35]))
 }

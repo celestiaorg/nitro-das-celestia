@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
 	appda "github.com/celestiaorg/celestia-app/v7/pkg/da"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
@@ -84,7 +86,15 @@ func makeStoreFixture(t *testing.T, message []byte, blobIndex int) (*CelestiaDA,
 	}
 
 	da := &CelestiaDA{
-		Cfg:        &DAConfig{WithWriter: true},
+		Cfg: &DAConfig{
+			WithWriter: true,
+			RetryConfig: RetryBackoffConfig{
+				MaxRetries:     3,
+				InitialBackoff: time.Millisecond,
+				MaxBackoff:     2 * time.Millisecond,
+				BackoffFactor:  1,
+			},
+		},
 		Client:     writeClient,
 		ReadClient: readClient,
 		Namespace:  &namespace,
@@ -130,4 +140,52 @@ func TestStore_ReturnsCertificateMatchingBlobAndHeader(t *testing.T) {
 	var wantDataRoot [32]byte
 	copy(wantDataRoot[:], header.DataHash)
 	require.Equal(t, wantDataRoot, parsed.DataRoot)
+}
+
+func TestStore_RetriesBlobGetAfterSuccessfulSubmit(t *testing.T) {
+	t.Parallel()
+
+	message := []byte("store should retry blob get after submit")
+	da, _, _ := makeStoreFixture(t, message, 3)
+
+	calls := 0
+	originalGet := da.ReadClient.Blob.Get
+	blobAPI := &blobapi.API{}
+	blobAPI.Internal.Get = func(ctx context.Context, h uint64, ns libshare.Namespace, c nodeblob.Commitment) (*nodeblob.Blob, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("transient blob get failure")
+		}
+		return originalGet(ctx, h, ns, c)
+	}
+	da.ReadClient.Blob = blobAPI
+
+	certBytes, err := da.Store(context.Background(), message)
+	require.NoError(t, err)
+	require.NotEmpty(t, certBytes)
+	require.Equal(t, 2, calls)
+}
+
+func TestStore_RetriesHeaderGetAfterSuccessfulSubmit(t *testing.T) {
+	t.Parallel()
+
+	message := []byte("store should retry header get after submit")
+	da, _, _ := makeStoreFixture(t, message, 3)
+
+	calls := 0
+	originalGetByHeight := da.ReadClient.Header.GetByHeight
+	headerAPI := &headerapi.API{}
+	headerAPI.Internal.GetByHeight = func(ctx context.Context, h uint64) (*nodeheader.ExtendedHeader, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("transient header get failure")
+		}
+		return originalGetByHeight(ctx, h)
+	}
+	da.ReadClient.Header = headerAPI
+
+	certBytes, err := da.Store(context.Background(), message)
+	require.NoError(t, err)
+	require.NotEmpty(t, certBytes)
+	require.Equal(t, 2, calls)
 }

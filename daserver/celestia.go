@@ -572,11 +572,18 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 	log.Info("Succesfully posted blob", "height", height, "commitment", hex.EncodeToString(dataBlob.Commitment))
 
 	// we fetch the blob so that we can get the correct start index in the square
-	dataBlob, err = c.ReadClient.Blob.Get(ctx, height, *c.Namespace, dataBlob.Commitment)
+	commitment := dataBlob.Commitment
+	err = c.retryWithBackoff(ctx, func() error {
+		var readErr error
+		dataBlob, readErr = c.ReadClient.Blob.Get(ctx, height, *c.Namespace, commitment)
+		if readErr != nil {
+			log.Warn("could not fetch blob", "height", height, "err", readErr)
+		}
+		return readErr
+	})
 	if err != nil {
-		log.Warn("could not fetch blob", "err", err)
 		celestiaFailureCounter.Inc(1)
-		return nil, err
+		return nil, fmt.Errorf("failed to fetch blob after retries: %w", err)
 	}
 
 	if dataBlob.Index() < 0 {
@@ -585,11 +592,18 @@ func (c *CelestiaDA) Store(ctx context.Context, message []byte) ([]byte, error) 
 		return nil, errors.New("unexpected response code")
 	}
 
-	header, err := c.ReadClient.Header.GetByHeight(ctx, height)
+	var header *header.ExtendedHeader
+	err = c.retryWithBackoff(ctx, func() error {
+		var readErr error
+		header, readErr = c.ReadClient.Header.GetByHeight(ctx, height)
+		if readErr != nil {
+			log.Warn("Header retrieval error", "height", height, "err", readErr)
+		}
+		return readErr
+	})
 	if err != nil {
 		celestiaFailureCounter.Inc(1)
-		log.Warn("Header retrieval error", "err", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to fetch header after retries: %w", err)
 	}
 
 	txCommitment, dataRoot := [32]byte{}, [32]byte{}
@@ -1557,13 +1571,13 @@ func (c *CelestiaDA) generateCelestiaProof(
 		sideNodes := make([]NamespaceNode, 0, len(sp.Nodes))
 		for _, nodeBytes := range sp.Nodes {
 			sideNodes = append(sideNodes, toNamespaceNode(nodeBytes))
-			}
-			sharesProof.ShareProofs = append(sharesProof.ShareProofs, NamespaceMerkleMultiproof{
-				BeginKey:  big.NewInt(int64(sp.Start)),
-				EndKey:    big.NewInt(int64(sp.End)),
-				SideNodes: sideNodes,
-			})
 		}
+		sharesProof.ShareProofs = append(sharesProof.ShareProofs, NamespaceMerkleMultiproof{
+			BeginKey:  big.NewInt(int64(sp.Start)),
+			EndKey:    big.NewInt(int64(sp.End)),
+			SideNodes: sideNodes,
+		})
+	}
 	for _, rr := range shareProof.RowProof.RowRoots {
 		sharesProof.RowRoots = append(sharesProof.RowRoots, toNamespaceNode(rr))
 	}

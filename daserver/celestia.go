@@ -930,7 +930,7 @@ func (c *CelestiaDA) GetProof(ctx context.Context, msg []byte) ([]byte, error) {
 	}
 
 	tuple := blobstreamx.DataRootTuple{
-		Height:   big.NewInt(int64(blobPointer.BlockHeight)),
+		Height:   new(big.Int).SetUint64(blobPointer.BlockHeight),
 		DataRoot: [32]byte(header.DataHash),
 	}
 
@@ -1009,7 +1009,7 @@ func (c *CelestiaDA) findBlobstreamCommitmentEvent(
 
 	latestCelestiaBlock, err := blobstream.LatestBlock(&bind.CallOpts{
 		Pending:     false,
-		BlockNumber: big.NewInt(int64(latestBlockNumber)),
+		BlockNumber: new(big.Int).SetUint64(latestBlockNumber),
 		Context:     ctx,
 	})
 	if err != nil {
@@ -1485,7 +1485,7 @@ func (c *CelestiaDA) generateCelestiaProof(
 	}
 
 	tuple := blobstreamx.DataRootTuple{
-		Height:   big.NewInt(int64(certificate.BlockHeight)),
+		Height:   new(big.Int).SetUint64(certificate.BlockHeight),
 		DataRoot: [32]byte(header.DataHash),
 	}
 
@@ -1557,13 +1557,13 @@ func (c *CelestiaDA) generateCelestiaProof(
 		sideNodes := make([]NamespaceNode, 0, len(sp.Nodes))
 		for _, nodeBytes := range sp.Nodes {
 			sideNodes = append(sideNodes, toNamespaceNode(nodeBytes))
+			}
+			sharesProof.ShareProofs = append(sharesProof.ShareProofs, NamespaceMerkleMultiproof{
+				BeginKey:  big.NewInt(int64(sp.Start)),
+				EndKey:    big.NewInt(int64(sp.End)),
+				SideNodes: sideNodes,
+			})
 		}
-		sharesProof.ShareProofs = append(sharesProof.ShareProofs, NamespaceMerkleMultiproof{
-			BeginKey:  big.NewInt(int64(sp.Start)),
-			EndKey:    big.NewInt(int64(sp.End)),
-			SideNodes: sideNodes,
-		})
-	}
 	for _, rr := range shareProof.RowProof.RowRoots {
 		sharesProof.RowRoots = append(sharesProof.RowRoots, toNamespaceNode(rr))
 	}

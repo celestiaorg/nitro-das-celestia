@@ -210,9 +210,9 @@ func toAttestationProof(
 	}
 
 	return AttestationProof{
-		TupleRootNonce: big.NewInt(int64(nonce)),
+		TupleRootNonce: new(big.Int).SetUint64(nonce),
 		Tuple: DataRootTuple{
-			Height:   big.NewInt(int64(height)),
+			Height:   new(big.Int).SetUint64(height),
 			DataRoot: blockDataRoot,
 		},
 		Proof: BinaryMerkleProof{

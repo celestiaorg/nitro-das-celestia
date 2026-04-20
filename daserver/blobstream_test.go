@@ -182,6 +182,7 @@ type fakeShareModule struct {
 	shares            []libshare.Share
 	getRangeCalls     int
 	getRangeErrOnCall map[int]error
+	nilProofOnCall    map[int]bool
 }
 
 type readPreimageFixture struct {
@@ -285,11 +286,11 @@ func (f *fakeShareModule) GetRange(_ context.Context, _ uint64, start, end int) 
 	if err := f.getRangeErrOnCall[f.getRangeCalls]; err != nil {
 		return nil, err
 	}
-	proof, err := appproof.NewShareInclusionProofFromEDS(f.eds, f.namespace, libshare.NewRange(start, end))
+	inclusionProof, err := appproof.NewShareInclusionProofFromEDS(f.eds, f.namespace, libshare.NewRange(start, end))
 	if err != nil {
 		return nil, err
 	}
-	proofBytes, err := proof.Marshal()
+	proofBytes, err := inclusionProof.Marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -301,9 +302,13 @@ func (f *fakeShareModule) GetRange(_ context.Context, _ uint64, start, end int) 
 	if err != nil {
 		return nil, err
 	}
+	var proof *tmtypes.ShareProof
+	if !f.nilProofOnCall[f.getRangeCalls] {
+		proof = &coreProof
+	}
 	return &nodebuildershare.GetRangeResult{
 		Shares: f.shares[start:end],
-		Proof:  &coreProof,
+		Proof:  proof,
 	}, nil
 }
 
@@ -977,6 +982,7 @@ func TestGenerateReadPreimageProof_HeaderDataRootMismatchReturnsError(t *testing
 
 	_, err := fixture.celestiaDA.GenerateReadPreimageProof(context.Background(), 0, fixture.certificate)
 	require.ErrorContains(t, err, "data root mismatch")
+	require.True(t, daprovider.IsCertificateValidationError(err))
 }
 
 func TestGenerateReadPreimageProof_InclusionProofErrorReturnsError(t *testing.T) {
@@ -998,6 +1004,17 @@ func TestGenerateReadPreimageProof_ShareRangeProofRetrievalErrorReturnsError(t *
 
 	_, err := fixture.celestiaDA.GenerateReadPreimageProof(context.Background(), 0, fixture.certificate)
 	require.ErrorContains(t, err, "failed to fetch share range proof")
+}
+
+func TestGenerateReadPreimageProof_MalformedShareRangeProofReturnsCertificateValidationError(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReadPreimageFixture(t)
+	fixture.shareModule.nilProofOnCall = map[int]bool{2: true}
+
+	_, err := fixture.celestiaDA.GenerateReadPreimageProof(context.Background(), 0, fixture.certificate)
+	require.ErrorContains(t, err, "certificate validation failed: share range proof missing")
+	require.True(t, daprovider.IsCertificateValidationError(err))
 }
 
 func TestGenerateReadPreimageProof_SuccessLayoutBoundaries(t *testing.T) {

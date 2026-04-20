@@ -817,7 +817,7 @@ func (c *CelestiaDA) Read(ctx context.Context, certificate *cert.CelestiaDACertV
 		fullRowShares, err := row.Shares()
 		if err != nil {
 			celestiaFailureCounter.Inc(1)
-			return nil, fmt.Errorf("failed to reconstruct row %d: %w", i, err)
+			return nil, certificateValidationError(fmt.Sprintf("failed to reconstruct row %d: %v", i, err))
 		}
 		rows = append(rows, libshare.ToBytes(fullRowShares))
 	}
@@ -1282,26 +1282,26 @@ func (c *CelestiaDA) GenerateCertificateValidityProof(ctx context.Context, certi
 
 func validateReadResult(result *types.ReadResult, certificate *cert.CelestiaDACertV1) error {
 	if certificate == nil {
-		return fmt.Errorf("nil certificate")
+		return certificateValidationError("nil certificate")
 	}
 	if result.SquareSize == 0 {
-		return fmt.Errorf("invalid square size")
+		return certificateValidationError("invalid square size")
 	}
 
 	odsSize := result.SquareSize / 2
 	if odsSize == 0 {
-		return fmt.Errorf("invalid ods size")
+		return certificateValidationError("invalid ods size")
 	}
 
 	rowCount := uint64(len(result.RowRoots))
 	if rowCount == 0 || len(result.ColumnRoots) != int(rowCount) {
-		return fmt.Errorf("invalid root set")
+		return certificateValidationError("invalid root set")
 	}
 	if result.StartRow >= rowCount || result.EndRow >= rowCount {
-		return fmt.Errorf("row index out of bounds")
+		return certificateValidationError("row index out of bounds")
 	}
 	if result.StartRow+uint64(len(result.Rows)) > rowCount {
-		return fmt.Errorf("row range exceeds available roots")
+		return certificateValidationError("row range exceeds available roots")
 	}
 
 	record := func(_ common.Hash, _ []byte, _ arbutil.PreimageType) {}
@@ -1310,10 +1310,10 @@ func validateReadResult(result *types.ReadResult, certificate *cert.CelestiaDACe
 		treeConstructor := tree.NewConstructor(record, odsSize)
 		root, err := tree.ComputeNmtRoot(treeConstructor, uint(rowIndex), row)
 		if err != nil {
-			return fmt.Errorf("failed to compute row root: %w", err)
+			return certificateValidationError(fmt.Sprintf("failed to compute row root: %v", err))
 		}
 		if !bytes.Equal(result.RowRoots[rowIndex], root) {
-			return fmt.Errorf("row root mismatch")
+			return certificateValidationError("row root mismatch")
 		}
 		rowIndex++
 	}
@@ -1323,7 +1323,7 @@ func validateReadResult(result *types.ReadResult, certificate *cert.CelestiaDACe
 	copy(slices[rowCount:], result.ColumnRoots)
 	dataRoot := tree.HashFromByteSlices(record, slices)
 	if !bytes.Equal(dataRoot, certificate.DataRoot[:]) {
-		return fmt.Errorf("data root mismatch")
+		return certificateValidationError("data root mismatch")
 	}
 	return nil
 }
@@ -1542,15 +1542,15 @@ func (c *CelestiaDA) generateCelestiaProof(
 		return nil, fmt.Errorf("failed to fetch share range proof: %w", err)
 	}
 	if rangeResult == nil || rangeResult.Proof == nil {
-		return nil, fmt.Errorf("share range proof missing")
+		return nil, certificateValidationError("share range proof missing")
 	}
 	if err := rangeResult.Verify(header.DataHash); err != nil {
 		celestiaValidationFailureCounter.Inc(1)
-		return nil, fmt.Errorf("share range verification failed: %w", err)
+		return nil, certificateValidationError(fmt.Sprintf("share range verification failed: %v", err))
 	}
 	shareProof := rangeResult.Proof
 	if len(shareProof.RowProof.Proofs) == 0 || len(shareProof.RowProof.RowRoots) == 0 {
-		return nil, fmt.Errorf("share inclusion proof missing row proof")
+		return nil, certificateValidationError("share inclusion proof missing row proof")
 	}
 
 	var nsID [28]byte

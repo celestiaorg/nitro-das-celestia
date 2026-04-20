@@ -434,6 +434,12 @@ func TestReaderForCelestia_PostParseInvalidCertificateReturnsCertificateValidati
 				certificate.DataRoot[0] ^= 0xff
 			},
 		},
+		{
+			name: "incomplete_row",
+			mutate: func(_ *cert.CelestiaDACertV1, result *ReadResult) {
+				result.Rows[0][0] = nil
+			},
+		},
 	}
 
 	for _, tc := range cases {

@@ -171,7 +171,7 @@ func RecoverPayloadFromCelestiaBatch(
 		root, err := tree.ComputeNmtRoot(treeConstructor, uint(rowIndex), row)
 		if err != nil {
 			log.Error("Failed to compute row root", "err", err)
-			return nil, nil, err
+			return nil, nil, certificateValidationError(fmt.Errorf("failed to compute row root: %w", err))
 		}
 
 		if !bytes.Equal(result.RowRoots[rowIndex], root) {

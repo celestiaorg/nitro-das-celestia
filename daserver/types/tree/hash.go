@@ -7,7 +7,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// TODO: make these have a large predefined capacity
 var (
 	leafPrefix  = []byte{0}
 	innerPrefix = []byte{1}
@@ -20,7 +19,9 @@ func emptyHash() []byte {
 
 // returns tmhash(0x00 || leaf)
 func leafHash(record func(bytes32, []byte, arbutil.PreimageType), leaf []byte) []byte {
-	preimage := append(leafPrefix, leaf...)
+	preimage := make([]byte, 0, 1+len(leaf))
+	preimage = append(preimage, leafPrefix...)
+	preimage = append(preimage, leaf...)
 	hash := tmhash.Sum(preimage)
 
 	record(common.BytesToHash(hash), preimage, arbutil.Sha2_256PreimageType)
@@ -29,9 +30,12 @@ func leafHash(record func(bytes32, []byte, arbutil.PreimageType), leaf []byte) [
 
 // returns tmhash(0x01 || left || right)
 func innerHash(record func(bytes32, []byte, arbutil.PreimageType), left []byte, right []byte) []byte {
-	preimage := append(innerPrefix, append(left, right...)...)
+	preimage := make([]byte, 0, 1+len(left)+len(right))
+	preimage = append(preimage, innerPrefix...)
+	preimage = append(preimage, left...)
+	preimage = append(preimage, right...)
 	hash := tmhash.Sum(preimage)
 
 	record(common.BytesToHash(hash), preimage, arbutil.Sha2_256PreimageType)
-	return tmhash.Sum(append(innerPrefix, append(left, right...)...))
+	return hash
 }

@@ -1,7 +1,6 @@
 name: e2e-nitro-celestia
 
 on:
-  on:
   push:
     branches:
       - main
@@ -34,10 +33,10 @@ on:
         description: "Ref for OffchainLabs testnode (release branch recommended)"
         required: false
         default: release
-        das_image:
-          description: "Celestia DA server image"
-          required: false
-          default: ghcr.io/celestiaorg/nitro-das-celestia:latest
+      das_image:
+        description: "Celestia DA server image"
+        required: false
+        default: ghcr.io/celestiaorg/nitro-das-celestia:latest
       rpc_skip_auth:
         description: "Disable Celestia RPC auth"
         required: true

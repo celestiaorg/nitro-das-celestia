@@ -5,7 +5,7 @@ A data availability server for the Arbitrum Nitro stack, leveraging Celestia DA 
 ## Review guide
 
 For the DA API upgrade in this branch, start with the implementation guide in
-[`docs/upgrade-da-api-implementation-guide.md`](/Users/tuxcanfly/Work/nitro-das-celestia/docs/upgrade-da-api-implementation-guide.md).
+[`docs/test/3.10_da_api.md`](./docs/test/3.10_da_api.md).
 
 ## Build locally
 

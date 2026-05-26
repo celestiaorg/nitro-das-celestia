@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	appda "github.com/celestiaorg/celestia-app/v7/pkg/da"
-	appproof "github.com/celestiaorg/celestia-app/v7/pkg/proof"
+	appda "github.com/celestiaorg/celestia-app/v8/pkg/da"
+	appproof "github.com/celestiaorg/celestia-app/v8/pkg/proof"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	nodeblob "github.com/celestiaorg/celestia-node/blob"
 	nodeheader "github.com/celestiaorg/celestia-node/header"

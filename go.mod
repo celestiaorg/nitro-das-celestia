@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/celestiaorg/aws-kms-keyring v0.4.0
 	github.com/celestiaorg/celestia-app/v6 v6.4.10
-	github.com/celestiaorg/celestia-app/v7 v7.0.2-mocha
+	github.com/celestiaorg/celestia-app/v8 v8.0.3
 	github.com/celestiaorg/celestia-node v0.30.2
 	github.com/celestiaorg/go-square/v3 v3.0.2
 	github.com/cometbft/cometbft v0.38.17
@@ -61,7 +61,6 @@ require (
 	github.com/aws/smithy-go v1.24.0 // indirect
 	github.com/bcp-innovations/hyperlane-cosmos v1.1.0 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/celestiaorg/celestia-app/v8 v8.0.3 // indirect
 	github.com/celestiaorg/go-square/v2 v2.3.3 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect

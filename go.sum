@@ -807,8 +807,6 @@ github.com/celestiaorg/boxo v0.29.0-fork-4 h1:A202u8w3Iqjw4ZlqSukfiMbefQEN+740GU
 github.com/celestiaorg/boxo v0.29.0-fork-4/go.mod h1:rXql6ncaLZZfLqDG3Cuw9ZYQKd3rMU5bk1TGXF0+ZL0=
 github.com/celestiaorg/celestia-app/v6 v6.4.10 h1:fmxl0fYXsqsYroTq1UTLOfx/u72c9pbtHQUv+WiumGA=
 github.com/celestiaorg/celestia-app/v6 v6.4.10/go.mod h1:GySplheXRObC9aJJ2kfzvs8oICER4ndCLb7KCPcZYow=
-github.com/celestiaorg/celestia-app/v7 v7.0.2-mocha h1:S52vSO2ATydttQJXYnKPbKK9D25PsttarZrTw6SB5Ws=
-github.com/celestiaorg/celestia-app/v7 v7.0.2-mocha/go.mod h1:VyYuR9HboJ0a2bYpqmtIcpoE10AfRBxJ/7x1bW3KCNE=
 github.com/celestiaorg/celestia-app/v8 v8.0.3 h1:mAv0WX2CMU1W1nyYjq/61GLeX0N4mYg4mIRpQWgt200=
 github.com/celestiaorg/celestia-app/v8 v8.0.3/go.mod h1:L3NCkdD9YANA09flo79xq8JhsKGb+2d4sEXPhYL7UCg=
 github.com/celestiaorg/celestia-core v0.39.24 h1:+PBBOfJjvfhBdCWSzDCKJ+mVXY5zjsp0QQ5Bg+Ig0/E=

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	appda "github.com/celestiaorg/celestia-app/v7/pkg/da"
+	appda "github.com/celestiaorg/celestia-app/v8/pkg/da"
 	txclient "github.com/celestiaorg/celestia-node/api/client"
 	node "github.com/celestiaorg/celestia-node/api/rpc/client"
 	nodeblob "github.com/celestiaorg/celestia-node/blob"

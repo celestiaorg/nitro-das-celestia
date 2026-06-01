@@ -1,0 +1,30 @@
+project_name: nitro-das-celestia
+
+builds:
+  -
+    id: nitro-das-celestia
+    main: ./cmd
+    binary: celestia-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+dockers_v2:
+  - images:
+      - "ghcr.io/celestiaorg/nitro-das-celestia"
+    tags:
+      - "v{{ .Version }}"
+    dockerfile: goreleaser.dockerfile
+    labels:
+      "org.opencontainers.image.title": "{{ .ProjectName }}"
+      "org.opencontainers.image.description": "{{ .ProjectName }}"
+      "org.opencontainers.image.url": "https://github.com/celestiaorg/nitro-das-celestia"
+      "org.opencontainers.image.source": "https://github.com/celestiaorg/nitro-das-celestia"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.licenses": "MIT"

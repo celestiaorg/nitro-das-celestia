@@ -118,7 +118,7 @@ jobs:
           docker run -d --name celestia-light --restart unless-stopped \
             -p 26658:26658 \
             ghcr.io/celestiaorg/celestia-node:latest \
-            celestia light start --rpc.skip-auth --p2p.network mocha-4
+            celestia light start --rpc.skip-auth --p2p.network mocha-5
           # Start your DA server image wired to that light node
           docker run -d --name celestia-da --restart unless-stopped \
             -p 9875:9875 \

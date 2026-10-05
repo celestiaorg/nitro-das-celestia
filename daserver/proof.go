@@ -3,7 +3,7 @@ package das
 import (
 	"math/big"
 
-	appproof "github.com/celestiaorg/celestia-app/v6/pkg/proof"
+	appproof "github.com/celestiaorg/celestia-app/v10/pkg/proof"
 	"github.com/celestiaorg/celestia-node/nodebuilder/blobstream"
 	"github.com/cometbft/cometbft/crypto/merkle"
 	"github.com/ethereum/go-ethereum/accounts/abi"

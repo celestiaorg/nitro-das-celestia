@@ -45,7 +45,7 @@ services:
       - --metrics-server.port=6070
       - --metrics-server.update-interval=5s
   celestia:
-      image:  ghcr.io/celestiaorg/celestia-node:v0.25.1-arabica
+      image:  ghcr.io/celestiaorg/celestia-node:v0.34.2-mocha
       container_name: 'celestia'
       environment:
         - NODE_TYPE=light
@@ -58,7 +58,7 @@ services:
         - "light"  # node type: light, bridge, or full
         - "start"
         - "--core.ip"
-        - "consensus-full-mocha-4.celestia-mocha.com"
+        - "rpc-mocha.pops.one"
         - "--core.port"
         - "9090"
         - "--p2p.network"
@@ -70,7 +70,7 @@ services:
         - "2121:2121"
         - "26658:26658"
       volumes:
-        - ${HOME}/.celestia-light-mocha-4:/home/celestia
+        - ${HOME}/.celestia-light-mocha-5:/home/celestia
 
   celestia-server-mocha:
       image: celestia-server:latest

@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	appda "github.com/celestiaorg/celestia-app/v6/pkg/da"
+	appda "github.com/celestiaorg/celestia-app/v10/pkg/da"
 	nodeblob "github.com/celestiaorg/celestia-node/blob"
-	libshare "github.com/celestiaorg/go-square/v3/share"
+	libshare "github.com/celestiaorg/go-square/v4/share"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/offchainlabs/nitro/daprovider"

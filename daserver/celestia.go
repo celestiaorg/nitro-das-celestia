@@ -24,7 +24,7 @@ import (
 	nodebuildershare "github.com/celestiaorg/celestia-node/nodebuilder/share"
 	"github.com/celestiaorg/celestia-node/share/shwap"
 	"github.com/celestiaorg/celestia-node/state"
-	libshare "github.com/celestiaorg/go-square/v3/share"
+	libshare "github.com/celestiaorg/go-square/v4/share"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/cert"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types"
 	"github.com/celestiaorg/nitro-das-celestia/daserver/types/tree"

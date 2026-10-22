@@ -3,7 +3,7 @@ package tree
 import (
 	"errors"
 
-	"github.com/celestiaorg/rsmt2d"
+	"github.com/celestiaorg/celestia-app/rsmt2d"
 	"github.com/ethereum/go-ethereum/common"
 )
 
